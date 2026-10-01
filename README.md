@@ -2,9 +2,9 @@
 
 Reusable templates for evidence-led, multi-agent software development. Refined through a completed software implementation and its retrospective, with safeguards for stalled handoffs, weak test oracles and misleading dashboard state.
 
-**[Open the generated documentation](http://127.0.0.1:8079/)** · [Kickoff template](templates/feature-kickoff.md)
+**[GitHub Pages documentation — publication pending](https://etibger.github.io/agentic_tools/)** · [Kickoff template](templates/feature-kickoff.md)
 
-The documentation link above opens the locally generated site on the originating workstation. The repository remains private. Public Pages deployment is off. [Download the generated site from a successful documentation build](https://github.com/etibger/agentic_tools/actions/workflows/docs.yml) (sign in, open a successful run, and download the mkdocs-site artifact).
+The link is the intended GitHub-hosted HTML address, not a local preview. **The site is not live yet:** Pages activation is pending; the source repository is now public. Until deployment is verified, [download the generated guide from a successful documentation build](https://github.com/etibger/agentic_tools/actions/workflows/docs.yml) (sign in, open a successful run, and download the mkdocs-site artifact).
 
 ## Start a feature
 
@@ -25,7 +25,7 @@ uv run mkdocs build --strict
 uv run mkdocs serve --dev-addr 127.0.0.1:8079
 ~~~
 
-Generated HTML lives in site/ and stays outside Git. The build copies canonical templates into downloadable files. The GitHub Actions workflow builds the same site and retains a downloadable artifact.
+Generated HTML lives in site/ and stays outside Git. The build copies canonical templates into downloadable files. The GitHub Actions workflow checks and builds the same site, retains a downloadable artifact, and deploys successful main-branch builds to GitHub Pages once hosting is configured and the PAGES_ENABLED repository variable is set to true. Pull requests are checked without deployment.
 
 ## Repository contents
 
@@ -34,12 +34,12 @@ Generated HTML lives in site/ and stays outside Git. The build copies canonical 
 | templates/ | Kickoff, design investigation, assignments, gates, retrospective and example evidence |
 | docs/ | MkDocs guide, communication figure and interactive synthetic dashboard |
 | scripts/ | Documentation build hook, gate-record, dashboard and publication checks |
-| .github/workflows/ | Strict documentation build and opt-in Pages publication |
+| .github/workflows/ | Strict documentation build and main-branch Pages publication |
 | uv.lock | Reproducible documentation dependencies |
 
 ## Publication boundaries
 
-This kit contains generic workflow guidance, original generic diagrams and synthetic dashboard data. Company-source documents, internal screenshots, captured page metadata and private links are excluded.
+This kit contains generic workflow guidance, reviewed generic diagrams and synthetic dashboard data. Company-source documents, internal screenshots, captured page metadata and private links are excluded.
 
 Before sharing new content, review its provenance and audience. Keep company references in an approved company system; do not copy them into this repository or generated-site artifacts. The publication check catches known archive paths, internal-service links and common credential formats, but does not replace a content review.
 

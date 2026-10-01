@@ -12,7 +12,7 @@ uv run mkdocs serve --dev-addr 127.0.0.1:8079
 
 The site uses local theme assets and system fonts. Generated site/ stays outside Git. The build creates downloads from the canonical templates.
 
-This repository is private at [etibger/agentic_tools](https://github.com/etibger/agentic_tools). The README opens the guide locally. [Successful documentation runs](https://github.com/etibger/agentic_tools/actions/workflows/docs.yml) provide generated-site artifacts to authenticated repository readers.
+The intended [GitHub Pages address](https://etibger.github.io/agentic_tools/) is configured, but publication is pending and the site is not live yet. The source repository is public at [etibger/agentic_tools](https://github.com/etibger/agentic_tools). The README labels the hosting status explicitly. [Successful documentation runs](https://github.com/etibger/agentic_tools/actions/workflows/docs.yml) provide generated-site artifacts to signed-in GitHub readers.
 
 ## Check new content before publication
 
@@ -26,10 +26,10 @@ The automated check blocks known imported-archive paths, internal-service URLs a
 
 ## Repository and site access are separate
 
-Public Pages publication is off. The workflow builds on push; deployment is an explicit opt-in dispatch after destination and audience approval.
+After hosting setup is complete, set the PAGES_ENABLED repository variable to true to enable deployment. Successful pushes to main then publish automatically after all documentation and publication checks pass. Pull requests run the checks without publishing. A manual workflow dispatch on main can redeploy the guide. While the variable is absent or false, builds retain downloadable artifacts without attempting deployment.
 
-A private repository does not automatically make a Pages site private. [Private Pages publication requires an Enterprise Cloud organization](https://docs.github.com/en/enterprise-cloud@latest/pages/getting-started-with-github-pages/changing-the-visibility-of-your-github-pages-site).
+The intended Pages guide will be public once activated. A private repository does not automatically make its Pages site private. [Private Pages publication requires an Enterprise Cloud organization](https://docs.github.com/en/enterprise-cloud@latest/pages/getting-started-with-github-pages/changing-the-visibility-of-your-github-pages-site).
 
-For an authorized site, use GitHub Pages settings with GitHub Actions as the source, then dispatch the documentation workflow with publication enabled. Replace the README link with the actual verified deployment URL. [Material's publication guide](https://squidfunk.github.io/mkdocs-material/publishing-your-site/) explains MkDocs hosting.
+Configure Pages to use GitHub Actions as its publishing source before enabling deployment. The workflow uploads only the generated site/ directory and records the deployed URL on the github-pages environment. The MkDocs site_url and README use the same hosted address. [Material's publication guide](https://squidfunk.github.io/mkdocs-material/publishing-your-site/) explains MkDocs hosting.
 
-For private use on a personal account, preview locally or download the authenticated build artifact. Neither is represented as an access-controlled hosted Pages site.
+For private material, use an approved access-controlled destination, or preview locally and share the generated artifact only with authorized readers. The hosted guide and its source-repository access are separate.
