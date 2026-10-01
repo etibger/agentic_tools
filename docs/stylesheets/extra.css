@@ -1,0 +1,9 @@
+.md-grid { max-width: 92rem; }
+.md-typeset { font-size: .86rem; line-height: 1.65; }
+.md-typeset h1 { font-weight: 750; letter-spacing: -.025em; }
+.md-typeset .lead { font-size: 1.15rem; max-width: 54rem; }
+.md-typeset table:not([class]) { font-size: .76rem; }
+.md-typeset iframe { width: 100%; min-height: 960px; border: 1px solid #94a3b8; border-radius: 14px; }
+.hero { padding: 2rem; border-radius: 20px; background: linear-gradient(130deg, #172554, #0f766e); color: #fff; margin: 1.5rem 0; }
+.hero h2 { color: #fff; margin-top: 0; }
+.hero a { color: #a7f3d0; }

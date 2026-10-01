@@ -1,0 +1,52 @@
+name: Documentation
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      publish_pages:
+        description: Publish the reviewed generic documentation to the approved Pages audience
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: documentation
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.21"
+          enable-cache: true
+      - run: uv sync --locked --python 3.12
+      - run: uv run python -m unittest discover -s scripts -p 'test_*.py'
+      - run: uv run python scripts/check_gate.py templates/gate-state.example.json
+      - run: uv run python scripts/check_publication.py
+      - run: node scripts/check_dashboard.mjs
+      - run: uv run mkdocs build --strict
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mkdocs-site
+          path: site/
+          retention-days: 30
+      - uses: actions/upload-pages-artifact@v3
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_pages
+        with:
+          path: site/
+  publish:
+    if: github.event_name == 'workflow_dispatch' && inputs.publish_pages
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Synthetic multi-agent dashboard</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:clamp(16px,3vw,38px);font:16px/1.5 system-ui,sans-serif;background:#0c1520;color:#dce8f6}main{max-width:1800px;margin:auto}h1{font-size:clamp(25px,3vw,40px);line-height:1.15}h2{margin:0 0 10px}p{margin:8px 0}.muted{color:#a6b8cc}.badge{display:inline-block;background:#334155;padding:3px 10px;border-radius:30px;font-size:13px}section{background:#172433;border:1px solid #33475b;padding:clamp(16px,2vw,28px);border-radius:16px;margin-top:18px}.tasks,.agents{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:10px}.card{border:1px solid #395066;border-radius:10px;padding:14px}.complete{border-color:#63ccb2;background:#173c39}.current{border:2px solid #f0bf68;background:#3b3426}.card strong{display:block}.card small{display:block;color:#acbed1}button{background:#2563eb;color:white;border:0;border-radius:7px;padding:9px 13px;font:inherit;cursor:pointer}button:focus-visible{outline:3px solid #facc15;outline-offset:3px}.controls{display:flex;flex-wrap:wrap;gap:10px}svg{display:block;width:100%;min-height:290px}table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:8px;border-bottom:1px solid #33475b}#clock{font-size:26px;font-weight:700}
+</style></head><body><main>
+<span class="badge">DEMONSTRATION · synthetic data · no live agents</span>
+<h1>Configurable navigation feature</h1><p class="muted">Explore the assessment stage or a completed task. Buttons update this example only.</p>
+<div class="controls"><button id="assessment">Show parallel assessment</button><button id="done">Show completed feature</button><button id="future">Advance observation clock by 1 day</button></div>
+<section><span class="badge" id="status"></span><h2 id="stage"></h2><p id="next"></p><div class="tasks" id="tasks"></div></section>
+<section><h2>Agents now</h2><p class="muted">An assignment can be done while the feature still has pending stages.</p><div class="agents" id="agents"></div></section>
+<section><h2>Approved task burndown</h2><p id="count"></p><p id="clock"></p><p class="muted" id="range"></p><svg viewBox="0 0 980 380" role="img" aria-labelledby="chartTitle chartDesc"><title id="chartTitle">Approved tasks remaining versus actual minutes</title><desc id="chartDesc"></desc><g id="plot"></g></svg><p id="pending"></p><p class="muted" id="freshness"></p></section>
+<section><h2>Usage and evidence</h2><p>Counter status: unavailable in this example. API-equivalent dollars, tokens, CPU and memory are not invented.</p><details><summary>Measurement limits</summary><p>Actual collectors must state scope, source, timestamps, missing counters and short-process gaps. Hypothetical API cost is not a billed subscription cost.</p></details></section>
+</main>
+<script>
+const stages=['Baseline','Shared contracts','Configuration','Composition','Interaction edges','Integrated assessment'];
+let complete=false, observation=70;
+const points=[[0,6],[15,5],[32,4],[70,3],[98,2],[130,1],[160,0]];
+function render(){
+ const end=complete?160:observation, accepted=complete?6:2, remaining=6-accepted;
+ document.getElementById('status').textContent=complete?'COMPLETE · task clock frozen':'ASSESSING · three independent roles';
+ document.getElementById('stage').textContent=complete?'All six approved tasks accepted':'Current stage: T2 — Configuration';
+ document.getElementById('next').textContent=complete?'Next: review the delivered candidate and recorded limitations. Broader retrospective closure is a separate state.':'Next: join Verification, Reviewer and Devil’s Advocate initial reports; exchange evidence; resolve findings.';
+ document.getElementById('tasks').innerHTML=stages.map((n,i)=>'<div class="card '+(i<accepted?'complete':i===accepted?'current':'')+'"><strong>T'+i+' · '+n+'</strong><small>'+(i<accepted?'Accepted':i===accepted?'Independent assessment':'Pending')+'</small></div>').join('');
+ const roles=[['🧭 Coordinator',complete?'Delivered':'Active',complete?'Delivery evidence checked':'Consume reports and own the gate join'],['🔨 Implementer',complete?'Assignment done':'Waiting',complete?'Source and affected docs delivered':'Frozen C2; awaits assessment disposition'],['✅ Verification',complete?'Assignment done':'Active',complete?'Integrated checks reported':'Native error/default/reload checks; exclusive build owner'],['💬 Reviewer',complete?'Assignment done':'Active',complete?'Integrated source report complete':'Read-only compatibility and integration review'],['⚡ Devil’s Advocate',complete?'Assignment done':'Active',complete?'Counterexample report complete':'Challenge malformed input and missing error context'],['📊 Dashboard',complete?'Snapshot retained':'Active',complete?'Task clock frozen; no invented telemetry':'Recorded state and responsive display'],['✍️ Journalist',complete?'Available':'Available',complete?'Record delivery and retrospective separately':'Await the next evidence-backed gate event'],['🔎 Investigator','Assignment done','Approved DI and canonical stage packet']];
+ document.getElementById('agents').innerHTML=roles.map(r=>'<div class="card"><strong>'+r[0]+'</strong><small>'+r[1]+'</small><p>'+r[2]+'</p></div>').join('');
+ document.getElementById('count').textContent=accepted+' accepted · '+remaining+' remaining of 6 approved tasks';
+ document.getElementById('clock').textContent=(complete?'Completed duration: ':'Elapsed task time: ')+(Math.floor(end/60)?Math.floor(end/60)+' h ':'')+(end%60)+' min';
+ document.getElementById('range').textContent=complete?'Range ends at the final accepted task, 160 min. Later observations do not extend it.':'Y: approved tasks remaining (0–6). X: actual elapsed minutes from baseline.';
+ const x=v=>70+v/end*855,y=v=>310-v/6*240;
+ let markup='<text x="70" y="26" fill="#bacde0">Approved tasks remaining</text>';
+ for(let i=0;i<=6;i++)markup+='<line x1="70" y1="'+y(i)+'" x2="925" y2="'+y(i)+'" stroke="#33475b"/><text x="40" y="'+(y(i)+5)+'" fill="#bacde0">'+i+'</text>';
+ for(let i=0;i<=4;i++){const t=Math.round(end*i/4);markup+='<text x="'+x(t)+'" y="342" text-anchor="middle" fill="#bacde0">'+t+' min</text>';}
+ const visible=points.filter(p=>p[0]<=end && p[1]>=remaining);
+ let path='M '+x(0)+' '+y(6);
+ for(let i=1;i<visible.length;i++)path+=' H '+x(visible[i][0])+' V '+y(visible[i][1]);
+ path+=' H '+x(end);
+ markup+='<path d="'+path+'" fill="none" stroke="#91caff" stroke-width="4"/>';
+ for(let i=1;i<visible.length;i++){const [t,r]=visible[i];markup+='<circle cx="'+x(t)+'" cy="'+y(r)+'" r="6" fill="#83dbc3"/><text x="'+Math.min(x(t)+8,875)+'" y="'+(y(r)-12)+'" fill="#83dbc3" font-size="13">T'+(i-1)+' · '+t+'m</text>';}
+ markup+='<text x="495" y="377" text-anchor="middle" fill="#bacde0">Actual elapsed wall-clock time</text>';
+ document.getElementById('plot').innerHTML=markup;
+ document.getElementById('chartDesc').textContent=accepted+' tasks accepted; '+remaining+' pending. Duration '+end+' minutes.';
+ document.getElementById('pending').textContent=complete?'Completed: T0–T5. No approved feature tasks remain.':'Accepted: T0, T1. Assessing: T2. Pending: T3, T4, T5.';
+ document.getElementById('freshness').textContent='Synthetic observation clock: '+observation+' min since baseline. This is separate from task duration.';
+}
+document.getElementById('assessment').onclick=()=>{complete=false;observation=70;render()};
+document.getElementById('done').onclick=()=>{complete=true;observation=160;render()};
+document.getElementById('future').onclick=()=>{observation+=1440;render()};
+render();
+</script></body></html>

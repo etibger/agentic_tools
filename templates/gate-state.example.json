@@ -1,0 +1,61 @@
+{
+  "synthetic": true,
+  "gate": "accepted",
+  "task": "T2",
+  "accepted_at": "2030-01-01T10:10:00Z",
+  "remaining": 3,
+  "candidate": {
+    "id": "C2",
+    "base": "SYNTHETIC-BASE",
+    "patch_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "frozen": true,
+    "inventory_ref": "c2/inventory.json",
+    "own_report_ref": "c2/own-report.json"
+  },
+  "reports": {
+    "verification": {
+      "status": "complete",
+      "candidate_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "initial_ref": "c2/verification-initial.json",
+      "exchange_ref": "c2/verification-exchange.json"
+    },
+    "reviewer": {
+      "status": "complete",
+      "candidate_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "initial_ref": "c2/reviewer-initial.json",
+      "exchange_ref": "c2/reviewer-exchange.json"
+    },
+    "devils_advocate": {
+      "status": "complete",
+      "candidate_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "initial_ref": "c2/devils_advocate-initial.json",
+      "exchange_ref": "c2/devils_advocate-exchange.json"
+    }
+  },
+  "checks": [
+    {
+      "id": "native-selection",
+      "kind": "suite",
+      "command": "project-native-test selected-suite",
+      "host": "SYNTHETIC-HOST",
+      "executor": "verification",
+      "candidate_sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "selected_count": 12,
+      "result": "passed",
+      "required": true,
+      "log_ref": "c2/native.log"
+    }
+  ],
+  "findings": [],
+  "native_resource": {
+    "released": true,
+    "last_command": "project-native-test selected-suite",
+    "release_ref": "c2/resource-release.json"
+  },
+  "next": {
+    "owner": "implementer",
+    "assignment": "T3 composition",
+    "acknowledged_at": "2030-01-01T10:10:30Z"
+  },
+  "completed_at": null
+}
