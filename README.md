@@ -2,9 +2,9 @@
 
 Reusable templates for evidence-led, multi-agent software development. Refined through a completed software implementation and its retrospective, with safeguards for stalled handoffs, weak test oracles and misleading dashboard state.
 
-**[GitHub Pages documentation — publication pending](https://etibger.github.io/agentic_tools/)** · [Kickoff template](templates/feature-kickoff.md)
+**[Open the generated documentation](https://etibger.github.io/agentic_tools/)** · [Kickoff template](templates/feature-kickoff.md)
 
-The link is the intended GitHub-hosted HTML address, not a local preview. **The site is not live yet:** Pages activation is pending; the source repository is now public. Until deployment is verified, [download the generated guide from a successful documentation build](https://github.com/etibger/agentic_tools/actions/workflows/docs.yml) (sign in, open a successful run, and download the mkdocs-site artifact).
+The link opens the live GitHub-hosted HTML guide from any device. Both the guide and this source repository are public. Validated main-branch changes deploy automatically. [Documentation builds](https://github.com/etibger/agentic_tools/actions/workflows/docs.yml) also retain a downloadable mkdocs-site artifact (sign in, open a successful run, and download it).
 
 ## Start a feature
 
