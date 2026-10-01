@@ -1,4 +1,5 @@
 """Check publication inputs for imported archives and common sensitive-data patterns."""
+import hashlib
 import re
 import subprocess
 from pathlib import Path
@@ -10,6 +11,11 @@ BLOCKED_PATHS = (
     "docs/assets/coordinated-multi-agent-workflow.pdf",
     "scripts/export_reference.py",
 )
+# Generic user-supplied workflow figure; visually reviewed and metadata stripped.
+# A changed image must be reviewed before updating this exact-content allowlist.
+REVIEWED_ASSETS = {
+    "docs/assets/agent-communication.png": "7a0d735ccfbc92964d6c4e6917c8d2f2832df531f097f00e276a7ee6dde90f7c",
+}
 PATTERNS = (
     ("internal service URL", re.compile(r"https?://(?:confluence|jira|gitlab)\.[A-Za-z0-9.-]+", re.I)),
     ("GitHub credential", re.compile(r"(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{40,})")),
@@ -32,6 +38,10 @@ def main():
         if not path.is_file():
             continue
         content = path.read_bytes()
+        if name in REVIEWED_ASSETS:
+            if hashlib.sha256(content).hexdigest() != REVIEWED_ASSETS[name]:
+                findings.append((name, "reviewed asset changed; disclosure review required"))
+            continue
         if b"\0" in content:
             findings.append((name, "binary file requires separate disclosure review"))
             continue

@@ -1,6 +1,6 @@
 # Documentation delivery and publication boundaries
 
-The guide contains generic workflow templates, an original communication diagram and a synthetic dashboard example. It does not redistribute company-source documents, internal screenshots, captured metadata or private-service links.
+The guide contains generic workflow templates, communication diagrams and a synthetic dashboard example. The user-provided agent relationship figure was reviewed for generic workflow content, cropped to the diagram and re-encoded without metadata. Its exact file hash is allowed by the publication check. Company-source documents, internal screenshots, captured metadata and private-service links remain excluded.
 
 ## Build and preview
 
@@ -22,7 +22,7 @@ uv run python scripts/check_publication.py
 
 Review all source files, diagrams, screenshots and downloadable artifacts for credentials, proprietary information and internal references. Company-source documents belong in an approved company system, outside this repository and its generated artifacts.
 
-The automated check blocks known imported-archive paths, internal-service URLs and common credential formats. It cannot establish that every piece of prose is safe or detect every secret format; semantic review remains necessary. Synthetic examples must be labelled.
+The automated check blocks known imported-archive paths, internal-service URLs and common credential formats. Binary files require a separately reviewed path and content hash; changing the approved diagram requires another review. It cannot establish that every piece of prose is safe or detect every secret format; semantic review remains necessary. Synthetic examples must be labelled.
 
 ## Repository and site access are separate
 

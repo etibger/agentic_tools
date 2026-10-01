@@ -12,6 +12,12 @@ Move a feature from a clear brief to an approved design, identified candidates, 
 
 This guide packages a working practice refined during a software feature implementation. It includes the changes prompted by actual friction: completed agents left without a next assignment, unclear task counts, weak interaction predicates and a burndown clock that kept advancing after completion.
 
+## Team and communication
+
+[![Agent relationships and communication paths](assets/agent-communication.png)](roles.md)
+
+[Explore the roles and handoff paths](roles.md), or [open the diagram at full size](assets/agent-communication.png). The coordinator owns the acceptance decision; Verification, Reviewer and Devil’s Advocate assess the same frozen candidate in parallel.
+
 ## What you get
 
 | Artifact | Use it for |

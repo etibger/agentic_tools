@@ -1,6 +1,10 @@
 # Roles and communication
 
-![Coordinator and specialist communication](assets/team.svg)
+[![Team roles and communication: the user guides the coordinator; the coordinator dispatches specialists; Verification, Reviewer and Devil’s Advocate independently assess the same frozen candidate and return reports for gate acceptance.](assets/agent-communication.png)](assets/agent-communication.png)
+
+[Open the full-size diagram](assets/agent-communication.png) · [Compact team overview](assets/team.svg)
+
+The diagram shows assignments, questions, evidence and the acceptance join. The five-minute watchdog shown is an optional safeguard from the example workflow; enabling it requires scheduling authority and an available runtime. This kit does not start a watchdog.
 
 The coordinator assigns bounded work and receives progress, questions and completion evidence. Specialists may exchange findings after their independent initial reports are preserved. Dashboard and Journalist consume verified events and durable evidence; arrows do not grant source mutation authority.
 
