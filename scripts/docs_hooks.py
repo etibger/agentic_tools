@@ -11,7 +11,9 @@ def on_pre_build(config, **kwargs):
             continue
         name = source.stem + ".txt" if source.suffix == ".md" else source.name
         expected.add(name)
-        shutil.copyfile(source, downloads / name)
+        target = downloads / name
+        if not target.is_file() or target.read_bytes() != source.read_bytes():
+            shutil.copyfile(source, target)
     for old in downloads.iterdir():
         if old.is_file() and old.name not in expected:
             old.unlink()

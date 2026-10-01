@@ -6,7 +6,7 @@
 
 Move a feature from a clear brief to an approved design, identified candidates, independent assessment, accurate documentation and a reviewable delivery. Keep the user informed without making them manage agent handoffs.
 
-[Start a feature](quick-start.md){ .md-button } [Get the prompt](templates.md){ .md-button }
+[Start a feature](quick-start.md){ .md-button } [Get the prompt](templates.md){ .md-button } [Download the workflow PDF](assets/coordinated-multi-agent-workflow.pdf){ .md-button }
 
 </div>
 
@@ -35,7 +35,7 @@ This guide packages a working practice refined during a software feature impleme
 
 Agent activity is not feature progress. Test count is not requirement coverage. An accepted local candidate is not an installed or released product.
 
-The [lessons](lessons.md) explain what the completed implementation and retrospective added. Templates use configurable roles and native project commands rather than project-specific defaults. [Publication boundaries](reference.md) explain how to keep company-source material outside the kit.
+The [lessons](lessons.md) explain what the completed implementation and retrospective added. Templates use configurable roles and native project commands rather than project-specific defaults. [Publication boundaries](reference.md) describe the explicitly approved PDF reference and how other company-source material stays outside the kit.
 
 !!! note "A workflow kit, not a service"
     These files do not launch agents, monitor a session or enforce the truth of reports by themselves. The coordinator and available runtime tools carry out the contracts.

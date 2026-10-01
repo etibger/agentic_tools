@@ -1,6 +1,14 @@
 # Documentation delivery and publication boundaries
 
-The guide contains generic workflow templates, communication diagrams and a synthetic dashboard example. The user-provided agent relationship figure was reviewed for generic workflow content, cropped to the diagram and re-encoded without metadata. Its exact file hash is allowed by the publication check. Company-source documents, internal screenshots, captured metadata and private-service links remain excluded.
+The guide contains generic workflow templates, communication diagrams and a synthetic dashboard example. The user-provided agent relationship figure was reviewed for generic workflow content, cropped to the diagram and re-encoded without metadata. Its exact file hash is allowed by the publication check. The original exported workflow PDF is included with explicit publication approval. Other source archives and raw page captures remain excluded.
+
+## Confluence workflow reference
+
+[Download the original exported workflow page (PDF, 16 pages)](assets/coordinated-multi-agent-workflow.pdf).
+
+This is the original version 5 snapshot, retaining its figures, historical project states and reference links. Some links inside it require access to the original company systems. It is locally typeset from the captured Confluence HTML, as stated on its first page.
+
+The user explicitly approved publishing this PDF. Its exact content hash is allowed by the publication checker; the raw page capture and other imported source files remain excluded.
 
 ## Build and preview
 
@@ -20,9 +28,9 @@ The [GitHub-hosted documentation](https://etibger.github.io/agentic_tools/) is l
 uv run python scripts/check_publication.py
 ~~~
 
-Review all source files, diagrams, screenshots and downloadable artifacts for credentials, proprietary information and internal references. Company-source documents belong in an approved company system, outside this repository and its generated artifacts.
+Review all source files, diagrams, screenshots and downloadable artifacts for credentials, proprietary information and internal references. Other company-source documents stay in an approved company system unless their publication is explicitly authorized.
 
-The automated check blocks known imported-archive paths, internal-service URLs and common credential formats. Binary files require a separately reviewed path and content hash; changing the approved diagram requires another review. It cannot establish that every piece of prose is safe or detect every secret format; semantic review remains necessary. Synthetic examples must be labelled.
+The automated check blocks known imported-archive paths, internal-service URLs and common credential formats. Binary files require a separately reviewed path and content hash; changing an approved diagram or PDF requires another review. It cannot establish that every piece of prose is safe or detect every secret format; semantic review remains necessary. Synthetic examples must be labelled.
 
 ## Repository and site access are separate
 

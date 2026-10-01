@@ -2,7 +2,7 @@
 
 Reusable templates for evidence-led, multi-agent software development. Refined through a completed software implementation and its retrospective, with safeguards for stalled handoffs, weak test oracles and misleading dashboard state.
 
-**[Open the generated documentation](https://etibger.github.io/agentic_tools/)** · [Kickoff template](templates/feature-kickoff.md)
+**[Open the generated documentation](https://etibger.github.io/agentic_tools/)** · [Download the Confluence workflow PDF](docs/assets/coordinated-multi-agent-workflow.pdf) · [Kickoff template](templates/feature-kickoff.md)
 
 The link opens the live GitHub-hosted HTML guide from any device. Both the guide and this source repository are public. Validated main-branch changes deploy automatically. [Documentation builds](https://github.com/etibger/agentic_tools/actions/workflows/docs.yml) also retain a downloadable mkdocs-site artifact (sign in, open a successful run, and download it).
 
@@ -39,8 +39,8 @@ Generated HTML lives in site/ and stays outside Git. The build copies canonical 
 
 ## Publication boundaries
 
-This kit contains generic workflow guidance, reviewed generic diagrams and synthetic dashboard data. Company-source documents, internal screenshots, captured page metadata and private links are excluded.
+This kit contains generic workflow guidance, reviewed diagrams, synthetic dashboard data and the original exported Confluence workflow PDF. The PDF was explicitly approved for public inclusion and retains its original figures, historical project states and reference links. Other company-source archives and raw page captures are excluded.
 
-Before sharing new content, review its provenance and audience. Keep company references in an approved company system; do not copy them into this repository or generated-site artifacts. The publication check catches known archive paths, internal-service links and common credential formats, but does not replace a content review.
+Before sharing new content, review its provenance and audience. Keep other company references in an approved company system unless their publication is explicitly authorized. The publication check catches known archive paths, internal-service links and common credential formats, but does not replace a content review.
 
 No product source or private implementation archive is included.

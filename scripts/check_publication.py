@@ -8,13 +8,14 @@ ROOT = Path(__file__).resolve().parents[1]
 BLOCKED_PATHS = (
     "reference/confluence/",
     "docs/assets/source/",
-    "docs/assets/coordinated-multi-agent-workflow.pdf",
     "scripts/export_reference.py",
 )
-# Generic user-supplied workflow figure; visually reviewed and metadata stripped.
-# A changed image must be reviewed before updating this exact-content allowlist.
+# Exact-content allowlist for reviewed assets. The figure is metadata-stripped.
+# The original workflow PDF was explicitly approved for public inclusion.
+# Changed asset bytes require another review before updating these hashes.
 REVIEWED_ASSETS = {
     "docs/assets/agent-communication.png": "7a0d735ccfbc92964d6c4e6917c8d2f2832df531f097f00e276a7ee6dde90f7c",
+    "docs/assets/coordinated-multi-agent-workflow.pdf": "fbd36d32c32839e7221b8669614edeb4849e415b650b18e9039f877154bf0982",
 }
 PATTERNS = (
     ("internal service URL", re.compile(r"https?://(?:confluence|jira|gitlab)\.[A-Za-z0-9.-]+", re.I)),
