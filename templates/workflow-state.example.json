@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "project": "Example feature",
+  "build_id": "dashboard-v1",
+  "updated_at": "2030-01-01T10:32:00Z",
+  "baseline_at": "2030-01-01T10:00:00Z",
+  "completed_at": null,
+  "current_stage": "T2 — Configuration",
+  "stage_status": "Independent assessment",
+  "next": {
+    "owner": "Coordinator",
+    "action": "Join the three independent initial reports and exchange findings",
+    "dependency": "Await Verification report"
+  },
+  "candidate": "C2 — frozen scoped patch",
+  "tasks": [
+    {
+      "id": "T0",
+      "title": "Baseline",
+      "status": "accepted",
+      "accepted_at": "2030-01-01T10:15:00Z"
+    },
+    {
+      "id": "T1",
+      "title": "DI approval and environment bring-up",
+      "status": "accepted",
+      "accepted_at": "2030-01-01T10:32:00Z"
+    },
+    {
+      "id": "T2",
+      "title": "Configuration",
+      "status": "active",
+      "accepted_at": null
+    },
+    {
+      "id": "T3",
+      "title": "Composition",
+      "status": "pending",
+      "accepted_at": null
+    },
+    {
+      "id": "T4",
+      "title": "Interaction",
+      "status": "pending",
+      "accepted_at": null
+    },
+    {
+      "id": "T5",
+      "title": "Integrated assessment",
+      "status": "pending",
+      "accepted_at": null
+    }
+  ],
+  "history": [
+    {
+      "at": "2030-01-01T10:00:00Z",
+      "remaining": 6,
+      "label": "Plan approved"
+    },
+    {
+      "at": "2030-01-01T10:15:00Z",
+      "remaining": 5,
+      "label": "T0 accepted"
+    },
+    {
+      "at": "2030-01-01T10:32:00Z",
+      "remaining": 4,
+      "label": "T1 accepted"
+    }
+  ],
+  "agents": [
+    {
+      "role": "Coordinator",
+      "status": "Active",
+      "assignment": "See canonical assignment record"
+    },
+    {
+      "role": "Implementer",
+      "status": "Available",
+      "assignment": "See canonical assignment record"
+    },
+    {
+      "role": "Verification",
+      "status": "Active",
+      "assignment": "Assess frozen C2"
+    },
+    {
+      "role": "Reviewer",
+      "status": "Active",
+      "assignment": "Assess frozen C2"
+    },
+    {
+      "role": "Devil’s Advocate",
+      "status": "Active",
+      "assignment": "Assess frozen C2"
+    },
+    {
+      "role": "Dashboard",
+      "status": "Active",
+      "assignment": "See canonical assignment record"
+    },
+    {
+      "role": "Journalist",
+      "status": "Available",
+      "assignment": "See canonical assignment record"
+    },
+    {
+      "role": "Investigator",
+      "status": "Available",
+      "assignment": "See canonical assignment record"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "platform-exception",
+      "status": "pending",
+      "question": "Required platform validation is unavailable on this host. Approve a bounded exception?",
+      "recommendation": "Record the missing platform explicitly and run all available native checks.",
+      "alternatives": "Provide the required host/toolchain.",
+      "consequence": "Final delivery will not claim full cross-platform qualification.",
+      "gate": "T5",
+      "requested_by": "Verification",
+      "requested_at": "2030-01-01T10:32:00Z",
+      "request_url": null,
+      "answer": null,
+      "answered_at": null
+    }
+  ],
+  "watchdog": {
+    "id": null,
+    "status": "not-created (synthetic example)",
+    "interval_minutes": 5,
+    "next_run_at": null,
+    "last_audit_at": null
+  },
+  "outputs": {
+    "di": {
+      "url": null,
+      "status": "Not published (synthetic example)"
+    },
+    "lessons": {
+      "url": null,
+      "status": "Pending actual retrospective; child of DI"
+    }
+  },
+  "evidence": [
+    "Exact check commands, candidate IDs, retained reports and coverage limits belong here."
+  ],
+  "findings": []
+}

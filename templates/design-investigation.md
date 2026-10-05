@@ -2,6 +2,8 @@
 
 Status: proposed / revised / approved. Version: [ID]. Source: [exact identity]. Reporting cutoff: [UTC timestamp].
 Prepared by: [actual role]. Decision owner: [user].
+Confluence parent: [authorized ID/URL]. Published DI: [verified URL/ID/version]. Lessons learned child: [pending / verified URL].
+Publish and read back this complete package before requesting approval and before dependent implementation/testing.
 
 ## Decision summary
 Desired behavior, recommendation, alternatives, practical consequences and exact approval needed.
@@ -31,7 +33,7 @@ Interfaces/data flow; editable figure; schema/examples/defaults/errors/lifecycle
 | [T0] | [objective] | [prerequisite] | [bounded work] | [trio/checks] | [pass/limits] |
 
 ## Open questions, risks and decisions
-One concise question per consequential unresolved choice. Record recommendation and impact.
+One concise question per consequential unresolved choice. Record recommendation and impact. Register each pending request with a stable ID, requesting role, affected gate, timestamp and evidence/request link in workflow-state.json; show it in the dashboard. Record answers once and clear pending state promptly.
 
 ## Approval
 User, date, exact approved version/choices/limits. Material revisions require a focused updated record. Silence is not approval.

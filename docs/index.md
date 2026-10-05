@@ -26,7 +26,9 @@ This guide packages a working practice refined during a software feature impleme
 | DI template | Present observed behavior, choices, ordered stages and acceptance evidence |
 | Assignment and gate templates | Name one owner, exact candidate, shared resources, independent reports and acknowledged next action |
 | Example state and checker | Demonstrate a bounded, machine-checkable handoff record |
-| Interactive dashboard | Explore a clearly labelled synthetic status display |
+| Live dashboard and workflow state | Serve a reusable display with current stage, next action, all pending approvals and responsive burndown |
+| Five-minute watchdog | Audit completions and dispatch authorized handoffs quietly between active turns |
+| Confluence outputs | Review the published DI before implementation; capture lessons as its child page |
 | Retrospective template | Collect actual independent reflections, real exchanges and a checked record |
 
 ## The central rule

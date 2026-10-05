@@ -51,4 +51,4 @@ uv run python scripts/check_gate.py /path/to/state.json --evidence-root /path/to
 
 ## Prevent the idle-team stall
 
-When no agents are active and work remains, diagnose the exact reason immediately. Dispatch the next authorized assignment if its prerequisites are satisfied. If held, display the dependency and owner. A recurring watchdog is optional and requires explicit scheduling authority; it complements completion consumption rather than replacing it.
+When no agents are active and work remains, diagnose the exact reason immediately. Dispatch the next authorized assignment if its prerequisites are satisfied. If held, display the dependency and owner. The submitted kickoff authorizes a recurring watchdog every five minutes by default. Create/reuse it through the runtime scheduler and record the actual ID/status; it complements prompt completion consumption rather than replacing it. Quiet unchanged audits and pause only at full delivery, including the verified lessons-learned child page, or explicit user pause.

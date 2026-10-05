@@ -32,4 +32,4 @@ Deferred ideas, unrun platforms/checks, open product questions and authority-dep
 Send all sections to actual participants. Incorporate corrections, preserve dissent, mark missing responses as gaps. Distinguish source, fixture, oracle, selection, environment and dashboard problems.
 
 ## 10. Authorized publication and readback
-Destination/audience; duplicate check; actual title/parent/content/tables/links; complete local draft and verified URL. If blocked, report the exact blocker. Create response alone is not verification.
+Default destination: a lessons-learned child of the verified DI output, within the completed kickoff’s authority. DI page ID/URL; lessons page ID/URL; audience; duplicate check; actual title/parent/content/tables/links; complete local draft and verified URL. If blocked, report the exact blocker. Create response alone is not verification. Link the child from the DI and dashboard, verify both links by readback and include the lessons URL in final delivery. Keep publication blockers explicit; the workflow and watchdog remain open until resolved or an explicit exception is approved.

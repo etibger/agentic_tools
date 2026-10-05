@@ -18,9 +18,13 @@ A DI is a software design and verification package. It should be concrete enough
 
 Use the [DI template](templates.md). A diagram is helpful, but label observed architecture separately from a proposed change.
 
+## Publish before implementation
+
+The submitted kickoff names a Confluence parent and audience. Publish the full DI as its child, check for duplicates, and read back the actual title, parent, complete content, tables and links. Send the verified URL before dependent implementation or feature testing. Missing access or a destination is a visible blocker with a recommended resolution; do not substitute an unpublished local draft silently. Keep a local copy and track revisions.
+
 ## Approval record
 
-Record who approved which design version, when and with which decisions or exceptions. Keep material later revisions explicit.
+Record who approved which design version, when and with which decisions or exceptions. Register pending questions in the dashboard with recommendation, consequence, requester, affected gate and timestamp. On reply, record the answer and clear the request promptly. DI approval is distinct from environment bring-up; name the remaining prerequisite rather than leaving approval pending. Keep material later revisions explicit.
 
 A task name alone is not an acceptance contract. A stage such as “configuration lifecycle” needs approved default, validation, error-context and reload behavior, plus the checks that distinguish them.
 

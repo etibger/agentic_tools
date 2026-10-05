@@ -40,13 +40,17 @@ Use the [retrospective template](templates.md):
 4. Ask participants to prioritize ideas with reasons; preserve dissent.
 5. Select one to three bounded experiments with role, trigger and effectiveness checks.
 6. Send the complete draft for attribution/accuracy checks and feedback.
-7. Publish only within existing authority, then verify parent, title, content, tables and links by readback.
+7. Publish within the submitted kickoff’s named authority: lessons learned is a child of the verified DI output. Verify parent, title, complete content, tables and links by readback, then link it from the DI and dashboard and give its URL to the user.
 
 Do not fabricate attendance, votes, launch settings, dialogue or measured gains. Replacement analysts and missing responses are explicit gaps. Recommendations do not create human commitments, deadlines or recurring automations.
 
 ## Product versus evidence corrections
 
 Keep these distinct in the record: actual source defect; test fixture defect; assertion/oracle weakness; selection/count correction; environment permission failure; dashboard presentation problem. Each has a different owner and resolving evidence.
+
+## Default outputs and closure
+
+The next run should not require the user to discover that these outputs are missing. The completed kickoff authorizes a live dashboard, a five-minute watchdog and the named Confluence DI/lessons hierarchy. The dashboard always shows pending user decisions with suggested resolutions and answered history. Publish the DI before implementation/testing; publish the checked lessons child after the actual retrospective. Pause the watchdog only after that full scope is delivered or the user explicitly pauses it. Report blocked scheduling/publication with a recommendation; silence does not waive the obligation.
 
 ## Sharing the lessons
 

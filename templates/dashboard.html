@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Feature workflow dashboard</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,2vw,30px);background:#0f171f;color:#e0e7ee;font:16px/1.5 system-ui,sans-serif}main{max-width:1600px;margin:auto}h1{font-size:28px}h2{font-size:20px;margin:0 0 8px}p{margin:6px 0}.muted,small{color:#a4b4c3}section{background:#192530;border:1px solid #344655;border-radius:12px;padding:18px;margin:14px 0}a{color:#91caff;overflow-wrap:anywhere}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:10px}.card{border:1px solid #3c5162;padding:12px;border-radius:8px;min-width:0;overflow-wrap:anywhere}.card strong,.card small{display:block}.accepted{border-color:#81d4b5}.active{border-color:#efbd64}.pending-decision{border-left:4px solid #efbd64}#health{padding:10px;border:1px solid #81d4b5;overflow-wrap:anywhere}#health.error{border-color:#ff8a8a;color:#ffbaba}#chart{width:100%;height:auto;aspect-ratio:980/360;display:block;max-height:460px}#approvals h2{color:#efbd64}#count{font-size:24px;font-weight:700}ul{padding-left:22px}details{margin-top:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere}#stage{font-size:24px}button{font:inherit;padding:6px 10px}button:focus-visible,a:focus-visible{outline:2px solid #efbd64}
+</style></head><body><main>
+<h1 id="project">Feature workflow</h1><p class="muted">Live recorded workflow state · refresh every 2 seconds · coordinator-owned acceptance</p><p id="health" role="status">Loading workflow-state.json…</p>
+<section><h2>Current stage</h2><strong id="stage">Awaiting state</strong><p id="stage-status"></p><p id="next"></p><p id="candidate" class="muted"></p><div id="tasks" class="grid"></div></section>
+<section id="approvals"><h2>Approvals needed from you</h2><p id="approval-count"></p><div id="decisions" class="grid"></div><details><summary>Answered requests</summary><div id="answered"></div></details><p class="muted">Reply in the linked request or coordinator chat. This dashboard displays decisions; it does not grant approval.</p></section>
+<section><h2>Handoff safeguard</h2><p>Freeze → independent initial reports → cross-role exchange → findings resolved/rechecked → gate accepted → next owner acknowledges</p><p id="watchdog"></p></section>
+<section><h2>Agents now</h2><div id="agents" class="grid"></div></section>
+<section><h2>Approved task burndown</h2><p id="count"></p><p id="clock" class="muted"></p><svg id="chart" viewBox="0 0 980 360" role="img" aria-labelledby="chart-title chart-desc"><title id="chart-title">Approved tasks remaining over elapsed wall-clock time</title><desc id="chart-desc"></desc><g id="plot"></g></svg><p id="checklist"></p><p class="muted">Accepted gates, not effort. Scope changes/reopened gates must have timestamped history entries. Completion freezes the task clock.</p></section>
+<section><h2>Investigation and lessons learned</h2><div id="outputs"></div></section>
+<section><h2>Findings, validation and usage</h2><ul id="evidence"></ul><p class="muted">Tokens, API-equivalent costs and local CPU/RSS are unavailable unless an actual scoped collector supplies them. Unknown is not measured zero.</p></section>
+</main><script>
+const el=id=>document.getElementById(id);
+const escapeHTML=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function safeLink(url,label){try{const u=new URL(url);if(!['http:','https:'].includes(u.protocol))throw Error('scheme');return '<a href="'+escapeHTML(u.href)+'" target="_blank" rel="noopener noreferrer">'+escapeHTML(label)+'</a>';}catch{return escapeHTML(label);}}
+const time=value=>value?new Date(value).toLocaleString():'Unavailable';
+function validate(s){
+ if(s.schema_version!==1||!Array.isArray(s.tasks)||!Array.isArray(s.decisions)||!Array.isArray(s.history)||!s.next||!s.watchdog||!s.outputs)throw Error('Unsupported or incomplete workflow state');
+ if(!Number.isFinite(Date.parse(s.baseline_at))||!Number.isFinite(Date.parse(s.updated_at)))throw Error('Invalid baseline/update timestamp');
+ if(s.tasks.some(t=>!['pending','active','accepted','held'].includes(t.status)))throw Error('Invalid task status');
+ if(s.decisions.some(d=>!['pending','approved','declined','withdrawn'].includes(d.status)))throw Error('Invalid decision status');
+ if(s.history.some(p=>!Number.isFinite(Date.parse(p.at))||!Number.isFinite(p.remaining)||p.remaining<0))throw Error('Invalid burndown history');
+ const accepted=s.tasks.filter(t=>t.status==='accepted');
+ if(accepted.some(t=>!Number.isFinite(Date.parse(t.accepted_at))))throw Error('Accepted gate has no timestamp');
+ if(s.completed_at&&(!Number.isFinite(Date.parse(s.completed_at))||accepted.length!==s.tasks.length))throw Error('Completion requires all accepted gates');
+ return s;
+}
+function drawChart(s,now){
+ const base=Date.parse(s.baseline_at), remaining=s.tasks.filter(t=>t.status!=='accepted').length;
+ const endTime=s.completed_at?Date.parse(s.completed_at):Math.max(now,Date.parse(s.updated_at));
+ const end=Math.max(1,(endTime-base)/60000);
+ const points=s.history.filter(p=>Date.parse(p.at)>=base&&Date.parse(p.at)<=endTime).slice().sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
+ const maximum=Math.max(1,s.tasks.length,...points.map(p=>p.remaining));
+ const x=v=>70+Math.min(end,Math.max(0,v))/end*850,y=v=>285-v/maximum*220;
+ let markup='<text x="70" y="24" fill="#a4b4c3" font-size="14">Approved gates remaining</text>';
+ const step=Math.max(1,Math.ceil(maximum/6));
+ for(let i=0;i<=maximum;i+=step)markup+='<line x1="70" y1="'+y(i)+'" x2="920" y2="'+y(i)+'" stroke="#344655"/><text x="44" y="'+(y(i)+5)+'" fill="#a4b4c3" font-size="14">'+i+'</text>';
+ for(let i=0;i<=4;i++){const m=end*i/4,label=end>=120?(m/60).toFixed(1)+' h':Math.round(m)+' min';markup+='<text x="'+x(m)+'" y="316" text-anchor="middle" fill="#a4b4c3" font-size="14">'+label+'</text>';}
+ if(points.length){let path='M '+x((Date.parse(points[0].at)-base)/60000)+' '+y(points[0].remaining);for(const p of points.slice(1))path+=' H '+x((Date.parse(p.at)-base)/60000)+' V '+y(p.remaining);path+=' H '+x(end);markup+='<path d="'+path+'" stroke="#91caff" stroke-width="3" fill="none"/>';
+ for(const p of points.slice(1)){const px=x((Date.parse(p.at)-base)/60000),py=y(p.remaining);markup+='<circle cx="'+px+'" cy="'+py+'" r="5" fill="#81d4b5"><title>'+escapeHTML(p.label+' · '+time(p.at))+'</title></circle><text x="'+px+'" y="'+(py-12)+'" text-anchor="'+(px>800?'end':'start')+'" fill="#81d4b5" font-size="13">'+escapeHTML(p.label)+'</text>';}}
+ else markup+='<text x="70" y="150" fill="#a4b4c3">No recorded gate history yet</text>';
+ markup+='<text x="490" y="352" text-anchor="middle" fill="#a4b4c3" font-size="14">Actual elapsed time since plan approval</text>';
+ el('plot').innerHTML=markup;el('chart-desc').textContent=remaining+' approved gates remain; '+end.toFixed(1)+' elapsed minutes.';
+ el('count').textContent=(s.tasks.length-remaining)+' completed · '+remaining+' remaining';
+ el('clock').textContent=(s.completed_at?'Completed duration: ':'Elapsed: ')+Math.floor((endTime-base)/3600000)+' h '+Math.floor((endTime-base)/60000)%60+' min · baseline '+time(s.baseline_at);
+ el('checklist').textContent=s.tasks.map(t=>t.id+': '+t.status+(t.accepted_at?' at '+time(t.accepted_at):'')).join(' · ');
+}
+function decisionCard(d){return '<div class="card '+(d.status==='pending'?'pending-decision':'')+'"><strong>'+escapeHTML(d.id+' · '+d.question)+'</strong><p>Suggested resolution: '+escapeHTML(d.recommendation)+'</p><p>Alternative: '+escapeHTML(d.alternatives)+'</p><p>Consequence: '+escapeHTML(d.consequence)+'</p><small>'+escapeHTML('Gate '+d.gate+' · '+d.requested_by+' · requested '+time(d.requested_at))+'</small>'+(d.request_url?'<p>'+safeLink(d.request_url,'Open request / evidence')+'</p>':'')+(d.status!=='pending'?'<p>'+escapeHTML(d.status+' · '+(d.answer??'')+' · '+time(d.answered_at))+'</p>':'')+'</div>';}
+function render(s,now=Date.now()){
+ el('project').textContent=s.project+(s.synthetic?' — SYNTHETIC EXAMPLE':'');el('stage').textContent=s.current_stage;el('stage-status').textContent=s.stage_status;
+ el('next').textContent='Next action: '+s.next.owner+' — '+s.next.action+' · Dependency: '+(s.next.dependency||'None');el('candidate').textContent='Candidate: '+(s.candidate||'Not frozen');
+ el('tasks').innerHTML=s.tasks.map(t=>'<div class="card '+(t.status==='accepted'?'accepted':t.status==='active'?'active':'')+'"><strong>'+escapeHTML(t.id+' · '+t.title)+'</strong><small>'+escapeHTML(t.status+(t.accepted_at?' · '+time(t.accepted_at):''))+'</small></div>').join('');
+ const pending=s.decisions.filter(d=>d.status==='pending');el('approval-count').textContent=pending.length?pending.length+' pending request(s)':'No approvals pending';el('decisions').innerHTML=pending.map(decisionCard).join('');el('answered').innerHTML=s.decisions.filter(d=>d.status!=='pending').map(decisionCard).join('')||'No answered requests recorded.';
+ el('agents').innerHTML=(s.agents||[]).map(a=>'<div class="card"><strong>'+escapeHTML(a.role)+'</strong><small>'+escapeHTML(a.status)+'</small><p>'+escapeHTML(a.assignment)+'</p></div>').join('');
+ el('watchdog').textContent='Watchdog: '+s.watchdog.status+' · every '+s.watchdog.interval_minutes+' min · ID '+(s.watchdog.id||'Unavailable')+' · next run '+time(s.watchdog.next_run_at)+' · last audit '+time(s.watchdog.last_audit_at);
+ el('outputs').innerHTML=['di','lessons'].map(k=>'<p>'+escapeHTML(k==='di'?'Detailed investigation: ':'Lessons learned (child of DI): ')+(s.outputs[k]?.url?safeLink(s.outputs[k].url,s.outputs[k].status):escapeHTML(s.outputs[k]?.status||'Not recorded'))+'</p>').join('');
+ el('evidence').innerHTML=[...(s.findings||[]),...(s.evidence||[])].map(e=>'<li>'+escapeHTML(e)+'</li>').join('');drawChart(s,now);
+}
+let lastGood=null,lastFetch=null;
+async function refresh(){
+ try{const response=await fetch('workflow-state.json',{cache:'no-store'});if(!response.ok)throw Error('HTTP '+response.status);const s=validate(await response.json());lastFetch=Date.now();lastGood=s;render(s,lastFetch);const age=Math.max(0,Math.floor((lastFetch-Date.parse(s.updated_at))/1000));el('health').className=age>300?'error':'';el('health').textContent=(age>300?'STALE source · ':'Live display · ')+'build '+s.build_id+' · source '+time(s.updated_at)+' ('+age+' s ago) · fetch '+time(lastFetch);}
+ catch(error){if(lastGood)render(lastGood);el('health').className='error';el('health').textContent='Refresh failed: '+error.message+' · '+(lastGood?'retaining last good state; last fetch '+time(lastFetch):'no state loaded')+'. Serve this folder over HTTP; see setup instructions.';}
+}
+refresh();setInterval(refresh,2000);
+</script></body></html>

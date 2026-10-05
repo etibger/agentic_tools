@@ -4,7 +4,7 @@
 
 [Open the full-size diagram](assets/agent-communication.png) · [Compact team overview](assets/team.svg)
 
-The diagram shows assignments, questions, evidence and the acceptance join. The five-minute watchdog shown is an optional safeguard from the example workflow; enabling it requires scheduling authority and an available runtime. This kit does not start a watchdog.
+The diagram shows assignments, questions, evidence and the acceptance join. The five-minute watchdog is a default of the explicitly submitted kickoff, which supplies scheduling authority. The coordinator must create/reuse it with an available runtime tool and record its actual ID/status. Reading this kit does not start a watchdog.
 
 The coordinator assigns bounded work and receives progress, questions and completion evidence. Specialists may exchange findings after their independent initial reports are preserved. Dashboard and Journalist consume verified events and durable evidence; arrows do not grant source mutation authority.
 

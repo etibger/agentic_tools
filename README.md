@@ -9,11 +9,11 @@ The link opens the live GitHub-hosted HTML guide from any device. Both the guide
 ## Start a feature
 
 1. Copy [feature-kickoff.md](templates/feature-kickoff.md) into your task context and fill the project brief.
-2. Give the completed prompt to your coordinator. Check available agent capacity and repository policies.
+2. Supply the Confluence parent page and audience, then give the completed prompt to your coordinator. Submission authorizes the default five-minute watchdog and the named DI/lessons outputs; check available tools and repository policies.
 3. Review the concrete investigation, design and ordered gates before authorizing implementation.
-4. Follow the dashboard and concise decision requests. The coordinator owns every completion-to-next-task handoff.
+4. Follow the live dashboard, including “Approvals needed from you”, and concise decision requests. The coordinator owns every completion-to-next-task handoff.
 
-The template is a prompt and a set of contracts, not an autonomous orchestration service. Copying it does not start agents, timers, publication or recurring automations.
+The defaults include a served live dashboard, a five-minute recurring watchdog, a verified Confluence DI page before implementation/testing and a lessons-learned child page under the DI at closure. The template is a prompt and a set of contracts, not an autonomous orchestration service. Copying it does not start agents, timers, publication or recurring automations.
 
 ## Build and preview the guide
 

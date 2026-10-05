@@ -6,19 +6,21 @@ Download the [kickoff prompt](templates.md), then supply the feature, repository
 
 State authority explicitly: local edits, branch creation, commits, push, pull requests, installation and publication are separate actions. Include allowed documentation paths and confidential material boundaries.
 
+Supply an authorized Confluence parent page ID/URL and audience. Submitting the completed brief authorizes the two named outputs (DI child of that parent, lessons learned child of DI) and a five-minute heartbeat in the current chat, unless you explicitly override those defaults. It does not grant Git/install or other publication authority. If the parent or capability is missing, the coordinator asks once with a recommendation and records the setup blocker.
+
 Do not carry a previous project's Git authority or model settings into a new task.
 
 ## 2. Establish the team and dashboard
 
 The coordinator reads applicable repository instructions and confirms actual available tools, capacity and launch controls. Start Dashboard and Journalist, then the Investigator. Record requested settings separately from settings the launcher actually confirms.
 
-The dashboard should show the investigation stage immediately. Specialist roles can finish or wait between assignments; availability is honest. If capacity is limited, sequence roles without pretending they are concurrent or preserving an identity that was replaced.
+The coordinator serves the downloadable dashboard with canonical JSON state (see [setup](dashboard.md#start-the-live-dashboard)), shares its URL and verifies the loaded display. Create or reuse the five-minute recurring watchdog, recording its actual scheduling ID/status. The dashboard should show the investigation stage immediately. Specialist roles can finish or wait between assignments; availability is honest. If capacity is limited, sequence roles without pretending they are concurrent or preserving an identity that was replaced.
 
 ## 3. Review a concrete DI
 
 The Investigator traces actual source behavior and native recipes, proposes design alternatives, names requirements and creates dependency-ordered stages. The coordinator presents the [DI package](design.md) with clear decisions and evidence.
 
-The user approves or revises that package. Approval of the initial brief and elapsed time do not approve the design. Independent baseline investigation may continue during a decision wait; dependent implementation remains held.
+Publish and read back the DI under the supplied Confluence parent and give the user its URL before dependent implementation or feature testing. The user approves or revises that package. Track each request, recommendation and answer in the dashboard; approval is separate from environment bring-up. Approval of the initial brief and elapsed time do not approve the design. Independent baseline investigation may continue during a decision wait; dependent implementation remains held.
 
 ## 4. Implement and assess
 
@@ -30,9 +32,9 @@ Preserve independent initial reports before exchanging conclusions. Resolve conc
 
 Check final source identity, integrated evidence and documentation. State coverage limits and exactly what was committed, installed or published.
 
-Conduct the actual retrospective: independent reflections, shared facts, cross-role discussion, prioritization, one to three bounded experiments and complete-draft accuracy checks. Publish only to an explicitly authorized destination and verify the result by readback.
+Conduct the actual retrospective: independent reflections, shared facts, cross-role discussion, prioritization, one to three bounded experiments and complete-draft accuracy checks. Publish the checked lessons learned as a child of the DI, link it from the DI and dashboard, and verify content and hierarchy by readback. Give both URLs in delivery.
 
-Stop task sampling and any authorized watchdog when its delivery scope is complete. Keep a final snapshot.
+Stop task sampling and pause the watchdog when the complete delivery scope, including the verified lessons page, is complete. Keep a final snapshot.
 
 ## Small-project adaptation
 

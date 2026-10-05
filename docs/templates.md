@@ -9,6 +9,9 @@ Canonical files live in the repository's templates/ directory. The build generat
 | [Bounded assignment](downloads/assignment.txt) | Specify owner, candidate, resources, evidence and stop condition |
 | [Gate and transition](downloads/gate-transition.txt) | Consume reports, decide the gate and acknowledge the next action |
 | [Retrospective](downloads/retrospective.txt) | Facilitate an actual team discussion and checked record |
+| [Live dashboard](downloads/dashboard.html) | Serve with canonical workflow-state.json; includes approvals, next action and bounded burndown |
+| [Workflow state example](downloads/workflow-state.example.json) | Synthetic starting shape for live state, decision register and output links |
+| [Five-minute watchdog](downloads/watchdog.txt) | Scheduler prompt and audit contract; requires actual runtime scheduling |
 | [Example gate state](downloads/gate-state.example.json) | Synthetic accepted-stage record for the checker |
 
 These are instructions for a future, explicitly started workflow. Reading or downloading them does not authorize execution. Fill required fields, remove inapplicable optional lanes and obey the target repository's policies.
