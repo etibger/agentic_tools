@@ -41,8 +41,17 @@ Use the [retrospective template](templates.md):
 5. Select one to three bounded experiments with role, trigger and effectiveness checks.
 6. Send the complete draft for attribution/accuracy checks and feedback.
 7. Publish within the submitted kickoff’s named authority: lessons learned is a child of the verified DI output. Verify parent, title, complete content, tables and links by readback, then link it from the DI and dashboard and give its URL to the user.
+8. Complete a separate post-retrospective actions milestone: execute authorized immediate fixes, independently verify results and track deferred experiments.
 
 Do not fabricate attendance, votes, launch settings, dialogue or measured gains. Replacement analysts and missing responses are explicit gaps. Recommendations do not create human commitments, deadlines or recurring automations.
+
+## Post-retrospective actions milestone
+
+Include this task after the retrospective in the approved plan and dashboard. Give each selected finding a stable action ID, lessons link, owner, scope/authority, status, dependency or next authorized trigger, success criterion, effectiveness check and result/commit evidence.
+
+Execute immediate fixes within existing scope and authority. Product/specification changes return to the Implementer and independent gate checks, with intermediate commits when authorized. Other actions retain their assigned owner. Material scope changes, another repository or missing authority require a concrete decision before execution.
+
+Accept the milestone only when immediate authorized actions are executed and verified, and deferred experiments have complete tracking. Proposed experiments remain proposed until their relevant work is authorized. A register entry does not finish an immediate fix, and adoption does not prove effectiveness. Link the action register from the lessons output and dashboard. Do not invent deadlines or measured gains.
 
 ## Product versus evidence corrections
 
@@ -50,7 +59,7 @@ Keep these distinct in the record: actual source defect; test fixture defect; as
 
 ## Default outputs and closure
 
-The next run should not require the user to discover that these outputs are missing. The completed kickoff authorizes a live dashboard, a five-minute watchdog and the named Confluence DI/lessons hierarchy. The dashboard always shows pending user decisions with suggested resolutions and answered history. Publish the DI before implementation/testing; publish the checked lessons child after the actual retrospective. Pause the watchdog only after that full scope is delivered or the user explicitly pauses it. Report blocked scheduling/publication with a recommendation; silence does not waive the obligation.
+The next run should not require the user to discover that these outputs are missing. The completed kickoff authorizes a live dashboard, a five-minute watchdog and the named Confluence DI/lessons hierarchy. Required generated product documentation and authorized intermediate checkpoints are part of implementation. The dashboard always shows pending user decisions with suggested resolutions and answered history. Publish the DI before implementation/testing; publish the checked lessons child after the actual retrospective, then complete the separate actions milestone. Pause the watchdog only after that full scope is delivered or the user explicitly pauses it. Report blocked scheduling/publication with a recommendation; silence does not waive the obligation.
 
 ## Sharing the lessons
 

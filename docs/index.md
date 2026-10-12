@@ -28,8 +28,11 @@ This guide packages a working practice refined during a software feature impleme
 | Example state and checker | Demonstrate a bounded, machine-checkable handoff record |
 | Live dashboard and workflow state | Serve a reusable display with current stage, next action, all pending approvals and responsive burndown |
 | Five-minute watchdog | Audit completions and dispatch authorized handoffs quietly between active turns |
+| Generated product specification | Required Implementer output, independently checked against requirements and behavior |
+| Intermediate commits | Scoped authorized rollback points with Verification tree receipts before dependent work |
 | Confluence outputs | Review the published DI before implementation; capture lessons as its child page |
 | Retrospective template | Collect actual independent reflections, real exchanges and a checked record |
+| Post-retrospective actions milestone | Execute authorized findings and track deferred experiments before workflow closure |
 
 ## The central rule
 

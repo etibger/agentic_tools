@@ -14,6 +14,8 @@ This is a reusable prompt. Preparation, reading and download do not start execut
 - Target environments and required validation: [discover native supported recipes; state required platforms]
 - Existing dirty work, active jobs and compatibility contracts: [inspect and preserve]
 - Artifact location and allowed repo documentation paths: [follow applicable policy; name affected docs during DI]
+- Product specification: [required: versioned human-readable sources, generated documentation command and preview/artifact destination; reuse the repo's renderer or choose one during DI]
+- Intermediate checkpoints: [required when commits are authorized: Implementer creates scoped stage commits; Verification confirms or acts as the explicitly assigned commit owner; record exact receipts before dependent work]
 - Authority: local edits [yes/no]; branch [name/none]; commit [yes/no]; push/PR [yes/no]; install [yes/no]; external publication [default: named DI/lessons pages under Confluence parent below; override explicitly]
 - Confidentiality / publication audience: [required before publishing internal references]
 - Models/reasoning: [inherit unless explicit supported overrides; record requested versus confirmed]
@@ -22,8 +24,9 @@ This is a reusable prompt. Preparation, reading and download do not start execut
 - Confluence output parent: [required page ID/URL and audience; discover an existing authorized project parent or ask once with a recommendation]
 - DI output: [default: Confluence child of the supplied parent, linked for review before implementation]
 - Lessons learned output: [default: Confluence child of the DI output, after actual retrospective and accuracy checks]
+- Post-retrospective actions milestone: [required after the retrospective: execute selected fixes within existing scope/authority; register deferred experiments with owner, trigger and success criterion]
 - Dashboard: [default: served live dashboard using dashboard.html and workflow-state.json; poll every 2 seconds]
-- Recurring watchdog: [default: every 5 minutes in this chat; quiet on unchanged state; pause after final delivery including lessons learned]
+- Recurring watchdog: [default: every 5 minutes in this chat; audit every agent's actual status; quiet on unchanged state; pause after final delivery including lessons learned and the post-retrospective actions milestone]
 
 Submitting this completed kickoff authorizes the named Confluence outputs and the five-minute recurring watchdog, unless explicitly overridden. Set the Authority publication field to this same bounded destination. Missing destination/access/scheduler support is a visible setup blocker, not permission to silently omit an output. Ask only for missing information or a necessary exception, with a suggested resolution. Reading the template alone grants no authority.
 
@@ -42,8 +45,8 @@ The Coordinator is accountable for scope, actual status consumption, every gate 
 Start Dashboard first so a live investigation-stage preview is visible, then Journalist, then Investigator. Serve the reusable dashboard over loopback HTTP, write its canonical workflow-state.json atomically and share the URL. Immediately create or reuse the five-minute watchdog using the runtime scheduling tool; record its actual ID/status/next run, not merely a promised schedule. Use watchdog.md for the audit contract. These are actual specialists where supported, not simulated conversations. Keep honest states while supporting roles are idle or available.
 
 - Investigator traces current source and native behavior, proposes DI/design and ordered stages.
-- Implementer alone writes product source, regression tests, examples and affected repo docs.
-- Verification independently executes checks and owns shared native outputs/caches during its lane.
+- Implementer alone writes product source, regression tests, examples and the required generated human-readable specification; creates authorized intermediate implementation commits.
+- Verification independently executes checks, uses the specification as an acceptance contract, confirms checkpoint receipts and owns shared native outputs/caches during its lane. It may create a checkpoint when explicitly assigned the serialized commit role; this does not grant product source mutation authority.
 - Reviewer independently inspects correctness, integration and maintainability, read-only.
 - Devil's Advocate independently challenges failure boundaries with concrete counterexamples, read-only.
 - Dashboard owns dashboard UI/state and scoped optional measurement; it never accepts product gates.
@@ -62,11 +65,17 @@ Before dependent implementation, present:
 - an editable observed/proposed diagram and requirement → stage → observable-check traceability;
 - dependency-ordered tasks with objective, owner, touched boundary, prerequisites, candidate, checks and exit gate.
 
+Include specification sources, generation/preview commands, semantic documentation checks and checkpoint ownership in the stage plan. Plan the retrospective and a separate post-retrospective actions milestone from the start, so follow-up work is visible on the dashboard.
+
 Publish the concrete DI to Confluence under the supplied parent, read back its complete content/title/parent/links, and point the user to that verified page BEFORE dependent implementation or feature testing. Keep a local copy. Ask for approval of the concrete version and choices. The kickoff approval, silence or elapsed time does not approve DI. Continue only independent preparatory work during a decision wait. Material later scope/semantics/order changes need focused renewed approval; routine in-plan fixes continue autonomously.
 
 ## 4. Implement, freeze and independently assess every approved stage
 
-Implementer reports a stable candidate and own checks. Stop product mutations. Identify the exact state with commit identity when authorized, otherwise base + complete scoped patch + new-file inventory + relevant hashes. Include untracked product files and preserve unrelated changes.
+Implementer delivers the stage's code, tests and specification together, generates the readable documentation and reports own checks. Cover interfaces, examples, defaults/errors, setup/configuration, operations and validation limits as relevant; a README alone is insufficient when the stage introduces contracts or operational behavior. Reuse native documentation tools and record missing prerequisites explicitly. Verification checks prose and examples against approved requirements and actual behavior; generated output alone is not semantic proof.
+
+Stop product mutations and create a scoped intermediate commit when authorized, rather than accumulating every stage until final delivery. Implementer is the default commit owner; Verification may take that role through an explicit handoff while source remains frozen. Only one owner stages/commits at a time. Inspect the full index, exclude unrelated work and follow repo rules for separating documentation from implementation commits. Record each checkpoint's SHA, parent, scope, owner, actual time and check status; Verification confirms the reachable commit and tree against the frozen inventory. A committed candidate may still be unaccepted. No amend, squash, backdating or intermediate push without the corresponding authority.
+
+Before the next dependent implementation assignment, the Coordinator consumes the exact commit and verification receipts. If Git authority or execution is missing, expose the pending checkpoint and dependency; use base + complete scoped patch + new-file inventory + relevant hashes for assessment without claiming a commit exists. Include untracked product files and preserve unrelated changes.
 
 Promptly dispatch that SAME frozen candidate in parallel to Verification, Reviewer and Devil's Advocate, unless capacity/resources force an explicit schedule. Verification alone owns the shared native lane. Reviewers remain read-only. Source must not change under assessment.
 
@@ -94,7 +103,7 @@ On every completion:
 
 Do not infer feature completion from completed agent assignments. If all agents are idle while required work remains, diagnose and dispatch the next authorized handoff. Do not keep agents artificially busy.
 
-The default authorized five-minute watchdog audits this same loop, consumes completed reports and dispatches ready authorized handoffs; it stays quiet on unchanged/non-actionable state and notifies only meaningful completion, failure, stalled handoff or required user decision with a recommendation. It does not replace coordinator accountability. Pause it only when its full delivery scope, including the verified lessons-learned child page, is complete or the user explicitly pauses it.
+The default authorized five-minute watchdog audits EVERY actual agent, including completed, active, idle/available, blocked and attention-needed states. Do not wait for an agent to volunteer a completion or blocker. Consume reports, check documentation/checkpoint obligations and dispatch ready authorized handoffs; stay quiet on unchanged/non-actionable state and notify only meaningful completion, failure, stalled handoff or required user decision with a recommendation. Record scheduled versus manual audits honestly. It does not replace coordinator accountability. Pause it only when its full delivery scope, including the verified lessons-learned child page and post-retrospective actions milestone, is complete or the user explicitly pauses it.
 
 ## 6. Make the dashboard understandable
 
@@ -118,7 +127,7 @@ Final integrated assessment applies the same independent trio and any approved e
 
 Provide a concise walkthrough, reviewable files, executed evidence and authority-dependent next steps. State exactly what was committed, installed, pushed or published. Local validation does not establish release/platform qualification.
 
-Freeze task completion time; separately close the broader workflow after its required outputs are complete. Stop owned collectors and authorized watchdogs, preserve history and deliver a final snapshot.
+Record product delivery separately; keep task completion unset while planned retrospective/actions gates remain. Freeze task completion time at the final accepted planned task, and separately close the broader workflow after its required outputs are complete. Stop owned collectors and authorized watchdogs at full closure, preserve history and deliver a final snapshot.
 
 ## 8. Conduct an actual retrospective
 
@@ -129,5 +138,13 @@ Select one to three bounded experiments with problem, accountable role, next aut
 Send the COMPLETE draft for attribution/accuracy checks and feedback. Missing replies are gaps, not agreement. Distinguish product defects from fixture, oracle, selection, environment and dashboard corrections.
 
 Publish the checked lessons learned as a child of the verified DI page, using the destination authorized in the brief. Check for an existing matching page before creation. Update the DI with the lessons link, add both links to the dashboard and final response, and read back title, parent/audience, complete content, tables and links. A create response alone is not delivery.
+
+## 9. Complete the post-retrospective actions milestone
+
+Keep a separate approved task on the dashboard after the retrospective. Turn selected findings into a bounded action register with stable ID, finding/lessons link, owner, scope/authority, status, dependency or trigger, success criterion, effectiveness check and evidence/commit links.
+
+Dispatch and carry out immediate fixes already covered by the user's scope and authority. Product/docs changes use the Implementer, checkpoint receipts and independent gate checks above; other actions retain their named owner. Material scope changes or missing authority require a concrete decision before execution. Do not edit another repo, install policy or run future experiments merely because the retrospective recommends it.
+
+Accept this milestone when authorized immediate actions have executed and their results are verified, and every deferred experiment has an explicit owner, trigger, status and success criterion. A register entry alone does not complete an immediate fix. Future experiments remain Proposed/Deferred until their relevant work is authorized; tracking them does not claim effectiveness. Link the register from the lessons output and dashboard, record actual task/scope transitions, and close the broader workflow and pause the watchdog only after this gate and the other required outputs are complete. If a completed workflow gains a newly authorized action, record the scope change and resume the matching watchdog when authorized.
 
 Begin execution now when this completed prompt is explicitly submitted.

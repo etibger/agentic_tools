@@ -12,8 +12,8 @@ The coordinator assigns bounded work and receives progress, questions and comple
 | --- | --- | --- |
 | 🧭 Coordinator | Scope, actual status consumption, gate disposition, resource ownership and next assignment | Accountable for feature continuity; does not infer completion from idle agents |
 | 🔎 Investigator | Source trace, baseline, design alternatives, DI and stage order | No speculative implementation before approval |
-| 🔨 Implementer | Product source, tests, examples and affected repo documentation | One writer; stops mutations while its candidate is frozen |
-| ✅ Verification | Independent executed checks, selection proof, logs and coverage limits | Exclusive owner of shared native outputs/caches during its lane |
+| 🔨 Implementer | Product source, tests, examples, required generated specification and authorized intermediate commits | One source writer; stops mutations while its candidate is frozen |
+| ✅ Verification | Independent checks, documentation semantics, checkpoint receipts, selection proof, logs and coverage limits | Owns shared native outputs/caches; may commit only through an explicit serialized handoff, without product edits |
 | 💬 Reviewer | Correctness, integration and maintainability | Read-only against the frozen identity; initial conclusions independent |
 | ⚡ Devil's Advocate | Failure boundaries, hidden assumptions and concrete counterexamples | Concerns need a trigger and a resolving observable |
 | 📊 Dashboard | Dashboard UI, current states, clocks and scoped usage | Never accepts a product gate |
@@ -30,6 +30,8 @@ The coordinator assigns bounded work and receives progress, questions and comple
 7. Record the receiving owner's acknowledgment and update the dashboard.
 
 Use a current-state record plus timestamped history. Do not repeat old pending language after acceptance.
+
+Every five minutes, the scheduled watchdog checks all actual agents, including blocked/idle states and completions not volunteered by the agent. The coordinator also consumes documentation and intermediate commit receipts; an assignment is incomplete when a required output is missing. See the [implementation contract](implementation.md).
 
 ## When the user is needed
 

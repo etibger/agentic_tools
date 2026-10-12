@@ -13,7 +13,9 @@ The link opens the live GitHub-hosted HTML guide from any device. Both the guide
 3. Review the concrete investigation, design and ordered gates before authorizing implementation.
 4. Follow the live dashboard, including “Approvals needed from you”, and concise decision requests. The coordinator owns every completion-to-next-task handoff.
 
-The defaults include a served live dashboard, a five-minute recurring watchdog, a verified Confluence DI page before implementation/testing and a lessons-learned child page under the DI at closure. The template is a prompt and a set of contracts, not an autonomous orchestration service. Copying it does not start agents, timers, publication or recurring automations.
+The defaults include a served live dashboard, a five-minute audit of every agent, a verified Confluence DI page before implementation/testing, required generated product documentation, authorized intermediate commits and a lessons-learned child page under the DI. A separate post-retrospective milestone executes authorized findings and tracks deferred experiments before closure. The template is a prompt and a set of contracts, not an autonomous orchestration service. Copying it does not start agents, timers, publication or recurring automations.
+
+The Implementer owns the [human-readable specification and checkpoint commits](docs/implementation.md); Verification checks documentation semantics and exact commit receipts, or creates a checkpoint through an explicit serialized handoff. Git authority remains explicit in the brief.
 
 ## Build and preview the guide
 

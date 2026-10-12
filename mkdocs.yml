@@ -53,6 +53,7 @@ nav:
   - Workflow:
       - Roles and communication: roles.md
       - Design and approval: design.md
+      - Implementation and specification: implementation.md
       - Candidates and gates: gates.md
       - Verification and resources: verification.md
   - Dashboard and usage: dashboard.md

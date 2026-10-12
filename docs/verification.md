@@ -36,6 +36,8 @@ Performance evidence needs fixed geometry, populated fixtures and matched scenar
 
 ## Independent documentation lane
 
+The Implementer must deliver and generate the product specification during implementation, before final delivery. Verification uses it as an acceptance contract and checks semantics against the DI and actual behavior. A successful documentation build alone does not establish correctness. See [required documentation and checkpoint responsibilities](implementation.md).
+
 An additional read-only docs verifier can inspect:
 
 - approved requirements and examples;

@@ -6,6 +6,8 @@ A branch name is mutable. Use an exact commit when authorized, or identify the u
 
 Include untracked product files. Preserve unrelated changes. Confirm identity before and after assessment. Source identity proves which state was inspected; it does not prove a check ran.
 
+When authorized, the Implementer creates scoped intermediate stage commits and Verification confirms the exact reachable tree. Verification may create a checkpoint through an explicit single-writer handoff. The Coordinator consumes both receipts before dependent implementation begins. Follow repository rules for separate documentation commits; missing authority or execution is an explicit checkpoint blocker. See [the checkpoint contract](implementation.md#create-intermediate-checkpoints).
+
 ## Parallel assessment and the join
 
 At a frozen stage, dispatch the same candidate to:
@@ -23,6 +25,8 @@ A fix changes identity. Freeze the corrected candidate, independently recheck th
 | Obligation | Required record |
 | --- | --- |
 | Identity | Base, patch/commit, complete inventory and confirmed hashes |
+| Checkpoints | Authorized intermediate SHA(s), parent/scope/owner/time and independent tree receipt, or explicit pending blocker |
+| Documentation | Required specification sources, readable generated output and independent semantic checks |
 | Initial assessments | All required role reports against the same candidate |
 | Executed checks | Command, environment, executor, selected tests, result and retained output |
 | Coverage | Requirement obligations and explicit skipped/blocked/unrun limits |
@@ -51,4 +55,4 @@ uv run python scripts/check_gate.py /path/to/state.json --evidence-root /path/to
 
 ## Prevent the idle-team stall
 
-When no agents are active and work remains, diagnose the exact reason immediately. Dispatch the next authorized assignment if its prerequisites are satisfied. If held, display the dependency and owner. The submitted kickoff authorizes a recurring watchdog every five minutes by default. Create/reuse it through the runtime scheduler and record the actual ID/status; it complements prompt completion consumption rather than replacing it. Quiet unchanged audits and pause only at full delivery, including the verified lessons-learned child page, or explicit user pause.
+When no agents are active and work remains, diagnose the exact reason immediately. Dispatch the next authorized assignment if its prerequisites are satisfied. If held, display the dependency and owner. The submitted kickoff authorizes a recurring watchdog every five minutes by default. Audit every actual agent without relying on completion/blocker messages. Create/reuse it through the runtime scheduler and record the actual ID/status; distinguish scheduled runs from manual audits. It complements prompt completion consumption rather than replacing it. Quiet unchanged audits and pause only at full delivery, including the verified lessons-learned child page and accepted post-retrospective actions milestone, or explicit user pause.

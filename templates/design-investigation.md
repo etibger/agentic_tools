@@ -28,6 +28,8 @@ Interfaces/data flow; editable figure; schema/examples/defaults/errors/lifecycle
 | [check] | [discovered command] | [host] | [purpose] | [owner] | [actual status] |
 
 ## Ordered bring-up and exit gates
+Include required specification sources/rendering/semantic checks and serialized checkpoint ownership per affected stage. Include the retrospective and a separate post-retrospective actions milestone with its acceptance boundary.
+
 | Task | Objective / boundary | Dependencies | Implementer work | Independent assessment | Required evidence / exit |
 | --- | --- | --- | --- | --- | --- |
 | [T0] | [objective] | [prerequisite] | [bounded work] | [trio/checks] | [pass/limits] |

@@ -4,11 +4,11 @@ Canonical files live in the repository's templates/ directory. The build generat
 
 | Template | Purpose |
 | --- | --- |
-| [Feature kickoff](downloads/feature-kickoff.txt) | Fill the brief and give the complete prompt to your coordinator |
+| [Feature kickoff](downloads/feature-kickoff.txt) | Define required specification/checkpoints, five-minute audits and a post-retrospective actions milestone |
 | [Detailed investigation](downloads/design-investigation.txt) | Prepare observed behavior, proposed choices, traceability and ordered exit gates |
 | [Bounded assignment](downloads/assignment.txt) | Specify owner, candidate, resources, evidence and stop condition |
 | [Gate and transition](downloads/gate-transition.txt) | Consume reports, decide the gate and acknowledge the next action |
-| [Retrospective](downloads/retrospective.txt) | Facilitate an actual team discussion and checked record |
+| [Retrospective](downloads/retrospective.txt) | Facilitate actual discussion, a checked record and tracked follow-up actions |
 | [Live dashboard](downloads/dashboard.html) | Serve with canonical workflow-state.json; includes approvals, next action and bounded burndown |
 | [Workflow state example](downloads/workflow-state.example.json) | Synthetic starting shape for live state, decision register and output links |
 | [Five-minute watchdog](downloads/watchdog.txt) | Scheduler prompt and audit contract; requires actual runtime scheduling |

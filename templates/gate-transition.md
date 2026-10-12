@@ -3,6 +3,8 @@
 - Task / candidate / exact base and patch-or-commit identity:
 - Complete scoped inventory and hashes verified before/after:
 - Implementer own report:
+- Required specification sources, generated readable output and independent semantic checks:
+- Authorized checkpoint commit(s), parent/scope/owner/time and Verification tree receipt, or explicit pending checkpoint blocker:
 - Required independent initial reports (Verification / Reviewer / Devil's Advocate / approved extra lanes):
 - Actual commands, test selections, outputs and requirement obligations:
 - Preserved initial failures and correction/supplement pointers:
@@ -16,6 +18,6 @@
 - Actual dispatch acknowledgment:
 - Dashboard current-state update:
 - Final task completion timestamp if zero remains:
-- Broader delivery/retrospective/collector closure still pending:
+- Broader delivery/retrospective/post-retrospective actions/collector closure still pending:
 
 A filled checklist is not evidence execution. Inspect the referenced source and results. Completion remains unconsumed until the coordinator records the disposition and next action.
