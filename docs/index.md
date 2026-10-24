@@ -1,24 +1,36 @@
-# Make progress visible. Make acceptance evidence-based.
+# Choose the work. Make acceptance evidence-based.
 
 <div class="hero" markdown>
 
-## One accountable coordinator, a team of independent specialists
+## One toolbox, three entry points
 
-Move a feature from a clear brief to an approved design, identified candidates, independent assessment, accurate documentation and a reviewable delivery. Keep the user informed without making them manage agent handoffs.
+Repair a defect, change an existing product or discover a new one. Use a shared contract for scope, authority, evidence and handoffs, with assurance proportionate to the consequences.
 
-[Start a feature](quick-start.md){ .md-button } [Get the prompt](templates.md){ .md-button } [Download the workflow PDF](assets/coordinated-multi-agent-workflow.pdf){ .md-button }
+[Choose a workflow](quick-start.md){ .md-button } [Read the specification](toolbox.md){ .md-button } [See worked examples](worked-examples.md){ .md-button }
 
 </div>
 
-This guide packages a working practice refined during a software feature implementation. It includes the changes prompted by actual friction: completed agents left without a next assignment, unclear task counts, weak interaction predicates and a burndown clock that kept advancing after completion.
+The toolbox builds on an existing multi-agent feature practice and its retrospectives. The three new entry points are pilot contracts; they do not introduce an autonomous orchestration service. Start with the [shared work contract](downloads/work-contract.txt) plus one kickoff.
 
-## Team and communication
+## Select the purpose and assurance
+
+| Workflow | Question | First useful evidence |
+| --- | --- | --- |
+| Bug fix | Why does intended behavior fail? | Minimal reproduction and demonstrated correction |
+| Feature change | How should an existing capability change? | Integrated user journey on the accepted product baseline |
+| New product | Is this useful and feasible? | Bounded feasibility result, then a first usable slice |
+
+Lightweight, standard and elevated assurance apply independently of work type. A small patch can have large consequences. Publication, a dashboard, recurring monitoring and a separate Journalist are explicit project choices. Read the [selection rules and shared core](toolbox.md).
+
+## Extended feature practice
+
+The original full-package recipe remains available with its DI, independent assessment trio, specification/checkpoints, dashboard, recurring audits, Confluence outputs and retrospective/actions obligations. Selecting it is explicit. Existing running projects retain their agreed contracts.
 
 [![Agent relationships and communication paths](assets/agent-communication.png)](roles.md)
 
-[Explore the roles and handoff paths](roles.md), or [open the diagram at full size](assets/agent-communication.png). The coordinator owns the acceptance decision; Verification, Reviewer and Devil’s Advocate assess the same frozen candidate in parallel.
+[Start the extended recipe](extended-feature-start.md), [explore its roles](roles.md), or [download the original workflow PDF](assets/coordinated-multi-agent-workflow.pdf). The figure describes that recipe rather than a required crew for every toolbox task.
 
-## What you get
+## Extended recipe artifacts
 
 | Artifact | Use it for |
 | --- | --- |
@@ -38,9 +50,9 @@ This guide packages a working practice refined during a software feature impleme
 
 **An agent finishing an assignment creates a coordinator obligation.** Read its report, check the source identity and executed evidence, record the gate disposition, release resources and dispatch the next authorized owner. Record that the assignment was acknowledged or expose a precise dependency.
 
-Agent activity is not feature progress. Test count is not requirement coverage. An accepted local candidate is not an installed or released product.
+Agent activity is not delivered progress. Test count is not requirement coverage. An accepted local candidate is not an installed or released product.
 
 The [lessons](lessons.md) explain what the completed implementation and retrospective added. Templates use configurable roles and native project commands rather than project-specific defaults. [Publication boundaries](reference.md) describe the explicitly approved PDF reference and how other company-source material stays outside the kit.
 
 !!! note "A workflow kit, not a service"
-    These files do not launch agents, monitor a session or enforce the truth of reports by themselves. The coordinator and available runtime tools carry out the contracts.
+    These files do not launch agents, monitor a session or enforce the truth of reports by themselves. The current checker covers the extended gate format only. The coordinator and available runtime tools carry out the contracts.

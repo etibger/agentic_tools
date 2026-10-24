@@ -1,5 +1,7 @@
 # Evidence-led multi-agent feature kickoff
 
+This is the extended multi-agent feature package. Select it explicitly when its full publication, monitoring, specification and retrospective obligations are wanted. For a toolbox bug fix, feature change or new product, use the matching kickoff with `work-contract.md`. Elevated assurance alone does not select this package. Existing agreed projects retain their contracts until explicitly migrated.
+
 This is a reusable prompt. Preparation, reading and download do not start execution. Submit the completed prompt explicitly when you want the coordinator to begin.
 
 ## Project brief — fill before execution

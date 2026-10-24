@@ -1,6 +1,6 @@
 site_name: Agentic Tools
 site_url: https://etibger.github.io/agentic_tools/
-site_description: Evidence-led multi-agent software development
+site_description: Evidence-led workflows for bug fixes, feature changes and new products
 repo_url: https://github.com/etibger/agentic_tools
 repo_name: etibger/agentic_tools
 edit_uri: edit/main/docs/
@@ -49,14 +49,18 @@ validation:
     unrecognized_links: warn
 nav:
   - Start here: index.md
-  - Quick start: quick-start.md
-  - Workflow:
+  - Choose a workflow: quick-start.md
+  - Toolbox specification: toolbox.md
+  - Worked examples: worked-examples.md
+  - Extended feature workflow:
+      - Quick start: extended-feature-start.md
       - Roles and communication: roles.md
       - Design and approval: design.md
       - Implementation and specification: implementation.md
       - Candidates and gates: gates.md
       - Verification and resources: verification.md
-  - Dashboard and usage: dashboard.md
-  - Retrospective and lessons: lessons.md
+      - Dashboard and usage: dashboard.md
+      - Retrospective and lessons: lessons.md
+  - Future improvements: future-improvements.md
   - Download the templates: templates.md
   - Delivery and publication: reference.md

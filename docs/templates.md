@@ -2,9 +2,26 @@
 
 Canonical files live in the repository's templates/ directory. The build generates the downloads below from those files, so the prompt and the guide do not carry competing copies.
 
+## Toolbox entry points
+
+Provide the completed shared contract alongside exactly one kickoff. See the [quick start](quick-start.md), [specification](toolbox.md) and [worked examples](worked-examples.md). These pilot contracts require manual evidence assessment; the existing gate checker does not validate their profiles.
+
 | Template | Purpose |
 | --- | --- |
-| [Feature kickoff](downloads/feature-kickoff.txt) | Define required specification/checkpoints, five-minute audits and a post-retrospective actions milestone |
+| [Shared work contract](downloads/work-contract.txt) | Scope, authority, assurance, decisions, evidence and handoff rules used by all three workflows |
+| [Bug-fix kickoff](downloads/bug-fix-kickoff.txt) | Reproduce, investigate, repair and verify a violation of intended behavior |
+| [Feature-change kickoff](downloads/feature-change-kickoff.txt) | Change an existing product through useful integrated increments |
+| [New-product kickoff](downloads/new-product-kickoff.txt) | Discover need and feasibility, then deliver a first usable slice through feature changes |
+
+Publication and monitoring are explicit choices for these entry points. Blank authority fields add no permissions.
+
+## Extended feature package
+
+The original full-package recipe retains its defaults. Use it explicitly through the [extended quick start](extended-feature-start.md); it is not automatically selected by elevated assurance.
+
+| Template | Purpose |
+| --- | --- |
+| [Extended feature kickoff](downloads/feature-kickoff.txt) | Define required specification/checkpoints, five-minute audits and a post-retrospective actions milestone |
 | [Detailed investigation](downloads/design-investigation.txt) | Prepare observed behavior, proposed choices, traceability and ordered exit gates |
 | [Bounded assignment](downloads/assignment.txt) | Specify owner, candidate, resources, evidence and stop condition |
 | [Gate and transition](downloads/gate-transition.txt) | Consume reports, decide the gate and acknowledge the next action |

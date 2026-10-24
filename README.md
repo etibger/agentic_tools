@@ -1,21 +1,31 @@
 # Agentic Tools
 
-Reusable templates for evidence-led, multi-agent software development. Refined through a completed software implementation and its retrospective, with safeguards for stalled handoffs, weak test oracles and misleading dashboard state.
+Reusable workflows for bug fixes, feature changes and new products. Choose the work, select assurance by risk, and use shared contracts for evidence, decisions and accountable handoffs.
 
-**[Open the generated documentation](https://etibger.github.io/agentic_tools/)** · [Download the Confluence workflow PDF](docs/assets/coordinated-multi-agent-workflow.pdf) · [Kickoff template](templates/feature-kickoff.md)
+**[Open the generated documentation](https://etibger.github.io/agentic_tools/)** · [Choose a workflow](docs/quick-start.md) · [Download the Confluence workflow PDF](docs/assets/coordinated-multi-agent-workflow.pdf)
 
 The link opens the live GitHub-hosted HTML guide from any device. Both the guide and this source repository are public. Validated main-branch changes deploy automatically. [Documentation builds](https://github.com/etibger/agentic_tools/actions/workflows/docs.yml) also retain a downloadable mkdocs-site artifact (sign in, open a successful run, and download it).
 
-## Start a feature
+## Choose a workflow
 
-1. Copy [feature-kickoff.md](templates/feature-kickoff.md) into your task context and fill the project brief.
-2. Supply the Confluence parent page and audience, then give the completed prompt to your coordinator. Submission authorizes the default five-minute watchdog and the named DI/lessons outputs; check available tools and repository policies.
-3. Review the concrete investigation, design and ordered gates before authorizing implementation.
-4. Follow the live dashboard, including “Approvals needed from you”, and concise decision requests. The coordinator owns every completion-to-next-task handoff.
+| Work | Entry point |
+| --- | --- |
+| Repair behavior that violates an intended contract | [Bug-fix kickoff](templates/bug-fix-kickoff.md) |
+| Add or change an existing product capability | [Feature-change kickoff](templates/feature-change-kickoff.md) |
+| Discover and deliver a first usable product | [New-product kickoff](templates/new-product-kickoff.md) |
 
-The defaults include a served live dashboard, a five-minute audit of every agent, a verified Confluence DI page before implementation/testing, required generated product documentation, authorized intermediate commits and a lessons-learned child page under the DI. A separate post-retrospective milestone executes authorized findings and tracks deferred experiments before closure. The template is a prompt and a set of contracts, not an autonomous orchestration service. Copying it does not start agents, timers, publication or recurring automations.
+1. Read the [toolbox specification](docs/toolbox.md) and use the [worked examples](docs/worked-examples.md) to choose an entry point.
+2. Provide the completed [shared work contract](templates/work-contract.md) alongside the selected kickoff. The coordinator records lightweight, standard or elevated assurance from effects and uncertainty.
+3. Resolve consequential choices, then execute useful increments within existing authority, using native project commands and applicable instructions.
+4. Accept the agreed user outcome with actual evidence, limits and receiving ownership. The coordinator consumes every completion and dispatches the next ready authorized assignment.
 
-The Implementer owns the [human-readable specification and checkpoint commits](docs/implementation.md); Verification checks documentation semantics and exact commit receipts, or creates a checkpoint through an explicit serialized handoff. Git authority remains explicit in the brief.
+The new entry points are pilot manual contracts. External publication, dashboards, recurring monitoring and separate narrative roles are explicit choices. The current gate checker supports the extended feature record only; profile-aware validation and automatic dispatch are not implemented. Copying a template does not start agents or services.
+
+## Extended multi-agent feature recipe
+
+The existing [feature-kickoff.md](templates/feature-kickoff.md) remains available for projects explicitly selecting its full package. Its defaults include a live dashboard, five-minute audits, verified Confluence DI before implementation/testing, generated product specification, authorized intermediate checkpoints, lessons publication and a post-retrospective actions milestone. See the [extended quick start](docs/extended-feature-start.md).
+
+These obligations belong to that recipe and existing agreed projects; they are not inherited by the new entry points. Selecting elevated assurance alone does not select this package. Git authority remains explicit in every workflow.
 
 ## Build and preview the guide
 
@@ -33,8 +43,8 @@ Generated HTML lives in site/ and stays outside Git. The build copies canonical 
 
 | Path | Purpose |
 | --- | --- |
-| templates/ | Kickoff, design investigation, assignments, gates, retrospective and example evidence |
-| docs/ | MkDocs guide, communication figure and interactive synthetic dashboard |
+| templates/ | Shared contract, three toolbox kickoffs, extended feature recipe and supporting evidence templates |
+| docs/ | Toolbox specification, worked examples, extended guide, communication figure and synthetic dashboard |
 | scripts/ | Documentation build hook, gate-record, dashboard and publication checks |
 | .github/workflows/ | Strict documentation build and main-branch Pages publication |
 | uv.lock | Reproducible documentation dependencies |

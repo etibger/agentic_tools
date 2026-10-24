@@ -4,6 +4,8 @@ The initial feature workflow reached an independently accepted local candidate. 
 
 This guide adopts its selected experiments into a reusable prompt. Their effectiveness must still be measured in later work; adoption does not prove time savings or eliminate defects.
 
+The [future-improvements register](future-improvements.md) records a later bounded coordination audit and proposed experiments. Those proposals remain separate from the adopted workflow until an authorized follow-up implements and evaluates them.
+
 ## A. Consume and acknowledge every transition
 
 **Observed:** completed specialist assignments were not always consumed promptly, and stale dashboard states concealed the next handoff.

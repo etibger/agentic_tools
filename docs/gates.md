@@ -1,5 +1,7 @@
 # Candidates and acceptance gates
 
+This page specifies the extended feature recipe and its current checker. The [toolbox specification](toolbox.md) defines the new pilot profiles, which this checker does not validate. Existing extended projects retain the obligations below until an explicit migration.
+
 ## Freeze an exact source state
 
 A branch name is mutable. Use an exact commit when authorized, or identify the uncommitted state with its base, complete scoped patch, new-file inventory and relevant file hashes.
