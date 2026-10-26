@@ -8,7 +8,27 @@ These commands establish an operator interface. Actual desktop integration, serv
 
 AOS component **0.2.4**, checked code `ce99e5d`, has independent acceptance for the supported tool handoff: 441 code checks, a real two-agent Rust trial with separate build and three passing tests, automatic handoff, cleanup, bounded replay, preserved original budgets/decisions and local dashboard/HTTPS adoption. The receiving Herdr chat verified the same version and approved/delivered work through CLI and HTTP. Earlier `d527ea5` Python workflow and awake idle-worker desktop-restart evidence retains its exact scope. Product commands, toolchain access and acceptance limits belong to the owning project. Herdr’s v0.3 requirements remain approved and execution held; its exact product recipe, resource permissions, native UI/sensor/performance checks and separately approved allowance are required before product execution. No app reload is needed for fresh CLI calls.
 
-Use the explicit CLI state directory and worker roots for the intended shared service. A connector reporting version 0.2.3 can still point at earlier prototype state: if that connector cannot find work which the authoritative ledger contains, investigate the connection without recreating the approval. MCP workflow controls are unavailable. Verify the receiving chat against the same known work, source identity and dashboard before handoff; a check in another chat does not satisfy that requirement.
+Use the explicit CLI state directory and worker roots for the intended shared service. A connector reporting version 0.2.3 can still point at earlier prototype state: if that connector cannot find work which the authoritative ledger contains, investigate the connection without recreating the approval. The original prototype connector is not the coordinator connection described below. Verify the receiving chat against the same known work, source identity and dashboard before handoff; a check in another chat does not satisfy that requirement.
+
+## Built-in coordinator connection
+
+AOS **0.2.5** adds the optional `serve-coordinator` MCP transport over the existing coordinator contracts. The earlier 0.2.4 acceptance above retains its exact scope. This connection does not create another ledger, answer approvals or change worker execution logic.
+
+Configure `aos serve-coordinator` with the same `--state-dir` and complete `--worker-writable-root` list as the shared service, plus its existing `--decision-origin https://127.0.0.1:8443`. Use a trusted project’s local `.codex/config.toml`; do not publish machine paths or enable the coordinator in assigned workers. The old `serve` command remains the isolated M0 compatibility/probe surface and must not be confused with this route.
+
+The connection exposes six tools:
+
+- `interface_capabilities`: exact component/source identity, connected ledger and declared roots.
+- `read_work`: current record and operator capabilities, including separate approval and execution status.
+- `read_service_status` and `read_dashboard`: the existing ledger projections.
+- `operation_schema`: the strict input schema for an operation.
+- `coordinator_operation`: introduce work, present a complete concept, register its contract, prepare a decision, reconcile existing prerequisites, admit, pause, resume or cancel.
+
+Read the operation schema, supply its exact request, and read work back after a mutation. Concept requests include the complete execution envelope; omitted fields are not silently added. Operation IDs, stale revision/digest rejection and approval/resource/budget gates are identical to the CLI. `prepare-decision` returns the existing HTTPS link and accepts no approval answer. A successful tool response can still contain a recorded hold; inspect the execution state and blockers.
+
+Admission makes approved work eligible. It does not launch a worker process. The existing bounded `aos worker` command still owns execution and cancellation cleanup; a coordinator must explicitly operate that process with the approved recipe. There is no new background launcher, process-stop tool or automatic chat wake-up. The optional worker audience is read-only, and actual assigned-agent filesystem/network/integration denial remains mandatory.
+
+After changing a project connection, refresh that MCP connection and verify tool discovery in the receiving chat. Confirm `mcp_coordinator_version: 1`, the expected state directory and current work before using mutations. A configured file or a test client alone does not establish that an already-open chat has refreshed its tools. Historical Store fields such as `dispatch_available` describe the old direct interface; use the `operator` receipt for transport availability and the lifecycle state for execution eligibility. A running dashboard can retain its accepted 0.2.4 process identity while a new 0.2.5 coordinator reads the same ledger; compare ledger revision/digest separately from process code identity.
 
 ## Environment and authority
 
