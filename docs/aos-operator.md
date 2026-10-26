@@ -32,14 +32,53 @@ Run the coordinator from an already authorized chat or administrator context. Th
 | `status WORK_ID` | Read the durable work record. `--surface service` and `--surface dashboard` project the same authoritative records. |
 | `pause`, `resume`, `cancel` | Delegate to existing lifecycle control and owned-effect reconciliation. |
 | `worker` | Run the existing worker with an explicit cycle cap and either `--fake-plan` or the separately approved `--runtime-recipes`. |
+| `dashboard-serve` | Explicitly run the packaged read-only loopback dashboard for an allowlist of work aliases and a chosen port. |
+| `dashboard-inspect`, `dashboard-stop` | Read the private dashboard process receipt; inspect its exact instance or request its authenticated graceful stop. |
 
 `register-contract`, `prepare-decision`, `admit`, `pause`, `resume` and `cancel` require `--operation-id`, `--work-id`, `--expected-work-revision` and `--digest`. The digest identifies the current concept; the work revision identifies the current mutable record. Read status after intervening operations or worker progress. Mutation checks are transactional. A stale revision/digest is rejected rather than silently refreshed.
 
 Keep an operation ID and its complete arguments stable across a retry. The saved result may describe the original operation rather than the current state; read status for current facts. Reusing an ID with different arguments is an error. A newly considered attempt after a hold needs a new ID and freshly read revision. Do not retry a held admission with the old ID expecting it to become eligible.
 
-Commands emit JSON results. Exit 0 means the command completed, including replay of an existing result; inspect the result. Exit 2 means rejection or unavailable input/state, with an error object on stderr (argument parser errors use normal argparse text). Exit 3 means admission or resume is held, with recorded blockers on stdout. A held admission is not dispatch permission. The foreground worker prints no per-cycle result; use status. Preserve error evidence before correcting the named cause.
+Commands emit JSON results. Exit 0 means the command completed, including replay of an existing result; inspect the result. Exit 2 means rejection or unavailable input/state, with an error object on stderr (argument parser errors use normal argparse text). Exit 3 means an explicit operational hold: admission/resume has recorded blockers, or a dashboard listener is unavailable. Details appear on stdout. A held admission is not dispatch permission. The foreground worker prints no per-cycle result; use status. Preserve error evidence before correcting the named cause.
 
 Pause fences new dispatch. An already running assignment may complete; its result and pause survive worker restart. Resume rechecks existing authority and prerequisites. Cancel persists `cancel_requested`; the worker must subsequently reconcile its exact owned effects. Resources remain owned while effects are unknown. Stopping a foreground worker process does not cancel work or prove child cleanup. Terminal delivered/cancelled work cannot be resumed.
+
+## Maintained dashboard process
+
+The dashboard service reads the same ledger through the existing snapshot collector and projection. It does not reconcile workflow state, launch workers, record decisions or publish history. Explicitly start it in a foreground terminal after the selected work exists:
+
+```sh
+uv run aos dashboard-serve --state-dir "$aos_demo/state" --worker-writable-root "$aos_demo/fixture" --work demo=CLI-DEMO --port 18480
+```
+
+Use your existing configured paths in place of the disposable example variables. Repeat `--work alias=WORK_ID` for each permitted view (1–32). Aliases must be unique kebab-case names; all work IDs are checked before listening. The port is mandatory; `--port 0` selects an unused disposable port. The service binds only `127.0.0.1`. It prints a JSON process receipt with its actual origin, instance, source version and renderer digest, then remains in the foreground. No persistent startup service is installed.
+
+Open the returned origin, or for this example [the demo dashboard](http://127.0.0.1:18480/work/demo/dashboard.html). The complete read allowlist is:
+
+| Resource | Content |
+| --- | --- |
+| `/` | Links to configured dashboards |
+| `/health.json` | Public process/version receipt; no stop credential or state-directory path |
+| `/work/ALIAS/dashboard.html` | Packaged renderer |
+| `/work/ALIAS/workflow-state.json` | Current dashboard projection of that work |
+| `/work/ALIAS/snapshot.json` | Exact service snapshot of that work, including its saved package/decision and factual execution records |
+
+Selected-work records may contain private project information. Keep this local service within its authorized audience. It serves no arbitrary files, raw evidence paths, TLS keys, decision credentials, private process receipt or unconfigured work IDs. Queries, traversal aliases, foreign Host/Origin headers and cross-site fetches are rejected; no CORS access is granted. The existing HTTPS human-decision service remains separate.
+
+From another terminal, inspect and stop this state directory's exact dashboard instance:
+
+```sh
+uv run aos dashboard-inspect --state-dir "$aos_demo/state" --worker-writable-root "$aos_demo/fixture"
+uv run aos dashboard-stop --state-dir "$aos_demo/state" --worker-writable-root "$aos_demo/fixture"
+```
+
+Inspection returns `absent`, `listening`, `stopped` or `unavailable`. Exit 3 means its listener could not be verified; it is not proof that an owned process stopped. The private mode-0600 `dashboard-service.json` receipt and lock live beside the ledger. One dashboard process owns each state directory. A duplicate start returns `dashboard_owned`; an occupied port returns `dashboard_port_in_use`. Both leave the existing owner/listener alone.
+
+Stop validates the saved loopback instance before sending its private, instance-bound credential. Its control endpoint rejects browser-origin requests and unauthenticated shutdown. Successful stop waits for the reconciled `stopped` receipt and removes that credential; repeated stop reads the same result. No process is killed. Ctrl+C or SIGTERM to this exact foreground process also closes its listener and records stopped state. These operations do not stop the separate worker or alter workflow controls.
+
+After an abrupt process failure, inspection retains the old instance as unavailable. An explicit new `dashboard-serve` may start only after acquiring the existing exclusive lock; it writes a fresh instance and credential. There is no force-kill or automatic takeover of a live owner. A stale/mismatched endpoint never authorizes stopping another process. Investigate a rejected or unconfirmed stop before reusing ownership.
+
+The renderer lives in `src/agentic_tools/aos/assets/dashboard.html` and is included in built wheels. `templates/dashboard.html` is a relative symlink to that same file, preserving the existing download and renderer-check paths. Runtime resource loading uses the package, with no lookup in private experiment directories or the source checkout. Maintainers can run `uv build --wheel` to produce a local package artifact; installation and live adoption remain separately authorized. Fresh-export/wheel tests serve the extracted package from a directory outside the checkout without installing it.
 
 ## Disposable simulated workflow
 
