@@ -27,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument('--fake-destination', type=Path, required=True)
     for name in ("serve", "status", "archive-preview", "archive-prepare-local", "prepare-decision", "decide-serve", "worker", "backup-ledger", "recover-startup-approval",
                  "introduce-work", "present-concept", "register-contract", "admit", "pause", "resume", "cancel",
-                 "dashboard-serve", "dashboard-inspect", "dashboard-stop"):
+                 "dashboard-serve", "dashboard-inspect", "dashboard-stop", "reconcile-prerequisites", "restore-ledger"):
         command = commands.add_parser(name)
         command.add_argument("--state-dir", type=Path, required=True, help="Private authoritative directory outside all worker-writable roots")
         command.add_argument("--worker-writable-root", type=Path, action="append", required=True, help="Declare each worker-writable root; actual runtime denial still needs verification")
@@ -35,7 +35,8 @@ def main(argv: list[str] | None = None) -> int:
             if name == "dashboard-serve":
                 command.add_argument("--work", action="append", required=True, help="Explicit allowed view: kebab-case-alias=WORK_ID; repeat for multiple works")
                 command.add_argument("--port", type=int, required=True, help="Loopback HTTP port; 0 requests an unused disposable port")
-        elif name in ("introduce-work", "present-concept"):
+                command.add_argument("--archive-journal", type=Path, help="Optional explicit local history journal; read-only and never served as a file")
+        elif name in ("introduce-work", "present-concept", "reconcile-prerequisites"):
             command.add_argument("--request", type=Path, required=True, help="Strict JSON request; no approval answer is accepted")
         elif name in ("register-contract", "admit", "pause", "resume", "cancel"):
             command.add_argument("--operation-id", required=True, help="Stable ID; retry with identical arguments")
@@ -48,6 +49,7 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--qualification-reference", help="Reference to independently observed explicit-human host evidence; never a model assertion")
         elif name == "status":
             command.add_argument("work_id")
+            command.add_argument("--archive-journal", type=Path, help="Optional local history observation from the same configured journal as the dashboard")
             command.add_argument("--surface", choices=("record", "service", "dashboard"), default="record",
                                  help="Service and dashboard share one exact read-only source snapshot")
         elif name in ('archive-preview', 'archive-prepare-local'):
@@ -64,6 +66,9 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--digest", required=True)
         elif name == "backup-ledger":
             command.add_argument("--backup", type=Path, required=True, help="New private SQLite backup path; never overwritten")
+        elif name == "restore-ledger":
+            command.add_argument("--backup", type=Path, required=True, help="Retained quiescent backup; runtime/budget sidecars are not restored")
+            command.add_argument("--sha256", required=True, help="Exact retained backup SHA-256; destination state directory must not exist")
         elif name == "recover-startup-approval":
             command.add_argument("--backup", type=Path, required=True, help="Exact consistent pre-recovery backup")
             command.add_argument("--evidence-bundle", type=Path, required=True,
@@ -90,17 +95,23 @@ def main(argv: list[str] | None = None) -> int:
             from .dashboard_service import DashboardService, inspect_service, stop_service, work_views
             store = Store(args.state_dir, tuple(args.worker_writable_root), read_only=True)
             if args.command == "dashboard-serve":
-                with DashboardService(store, work_views(args.work), args.port) as service:
+                with DashboardService(store, work_views(args.work), args.port, archive_journal=args.archive_journal) as service:
                     service.run()
                 return 0
             result = inspect_service(store) if args.command == "dashboard-inspect" else stop_service(store)
             print(json.dumps(result, indent=2))
             return 3 if result.get("state") == "unavailable" else 0
-        if args.command in ("introduce-work", "present-concept"):
-            from .coordinator import ConceptRequest, IntroductionRequest, request_file
-            request = request_file(args.request, IntroductionRequest if args.command == "introduce-work" else ConceptRequest)
+        if args.command in ("introduce-work", "present-concept", "reconcile-prerequisites"):
+            from .coordinator import ConceptRequest, IntroductionRequest, PrerequisiteRequest, request_file
+            schema = {"introduce-work": IntroductionRequest, "present-concept": ConceptRequest,
+                      "reconcile-prerequisites": PrerequisiteRequest}[args.command]
+            request = request_file(args.request, schema)
             store = Store(args.state_dir, tuple(args.worker_writable_root))
-            result = store.introduce(**request) if args.command == "introduce-work" else store.present(**request)
+            if args.command == "reconcile-prerequisites":
+                from .lifecycle import Lifecycle
+                result = Lifecycle(store).reconcile_prerequisites(**request)
+            else:
+                result = store.introduce(**request) if args.command == "introduce-work" else store.present(**request)
             print(json.dumps(result, indent=2))
             return 0
         if args.command in ("register-contract", "admit", "pause", "resume", "cancel"):
@@ -125,18 +136,18 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command in ('archive-publish-local', 'archive-read-local'):
             from .archive import ArchiveJournal, LocalFakeDestination
-            journal = ArchiveJournal(args.journal)
+            journal = ArchiveJournal(args.journal, read_only=args.command == 'archive-read-local')
             result = (journal.read(args.intent_id) if args.command == 'archive-read-local' else
                       journal.publish_local(args.intent_id, LocalFakeDestination(args.fake_destination)))
             print(json.dumps(result, indent=2))
             return 0
         if args.command in ('archive-preview', 'archive-prepare-local'):
-            from .archive import ArchiveJournal, LocalFakeDestination, preview
+            from .archive import ArchiveJournal, LocalFakeDestination, coordinator_journal, preview
             from .projection import collect
             store = Store(args.state_dir, tuple(args.worker_writable_root), read_only=True)
             snapshot = collect(store, args.work_id)
             result = (preview(snapshot, args.milestone) if args.command == 'archive-preview' else
-                      ArchiveJournal(args.journal).prepare(args.intent_id, snapshot, args.milestone,
+                      ArchiveJournal(coordinator_journal(args.journal, store.worker_writable_roots)).prepare(args.intent_id, snapshot, args.milestone,
                                                           LocalFakeDestination(args.fake_destination)))
             print(json.dumps(result, indent=2))
             return 0
@@ -148,14 +159,22 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 from .projection import collect, dashboard
                 result = collect(store, args.work_id)
-                if args.surface == 'dashboard':
-                    result = dashboard(result)
+            if args.archive_journal:
+                from .archive import LocalHistoryCollector, coordinator_journal
+                journal = coordinator_journal(args.archive_journal, store.worker_writable_roots)
+                result['local_history'] = LocalHistoryCollector(journal, args.work_id).collect()
+            if args.surface == 'dashboard':
+                result = dashboard(result)
             result["operator"] = capabilities()
             print(json.dumps(result, indent=2))
             return 0
         if args.command == "backup-ledger":
             store = Store(args.state_dir, tuple(args.worker_writable_root), read_only=True)
             print(json.dumps(store.consistent_backup(args.backup), indent=2))
+            return 0
+        if args.command == "restore-ledger":
+            result = Store.restore_backup(args.backup, args.state_dir, tuple(args.worker_writable_root), args.sha256)
+            print(json.dumps(result, indent=2))
             return 0
         if args.command == "recover-startup-approval":
             bundle = json.loads(args.evidence_bundle.read_text())
@@ -176,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
             from .lifecycle import Lifecycle
             from .worker import FakeRuntime, Worker
             store = Store(args.state_dir, tuple(args.worker_writable_root))
+            if store.recovery_hold():
+                raise Rejected('recovery_copy_held', 'A restored recovery copy cannot create a runtime or reset runtime/shared-budget ownership')
             lifecycle = Lifecycle(store)
             if args.fake_plan:
                 runtime = FakeRuntime(store.directory / "fake-runtime.sqlite3", json.loads(args.fake_plan.read_text()))

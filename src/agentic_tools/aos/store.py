@@ -289,7 +289,26 @@ class Store:
             result["observed_at"] = now()
             result["dispatch_available"] = False
             result["next_action"] = "Q1 simulation only; inspect lifecycle blockers. Live implementation dispatch is unavailable" if "lifecycle" in result else "M0 qualification only; implementation dispatch is unavailable"
+            hold = self.recovery_hold()
+            if hold is not None:
+                result['recovery_hold'] = hold
             return result
+
+    def recovery_hold(self) -> dict | None:
+        """A recovery copy is never an adopted second execution ledger."""
+        path = self.directory / 'restore-hold.json'
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        except FileNotFoundError:
+            return None
+        with os.fdopen(fd, 'r', encoding='utf-8') as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+                raise Rejected('recovery_copy_held', 'Recovery-copy marker is unsafe; execution remains held')
+            value = json.load(stream)
+        if not isinstance(value, dict) or value.get('format') != 'aos-recovery-copy-hold-v1' or value.get('adoption_authorized') is not False:
+            raise Rejected('recovery_copy_held', 'Recovery-copy marker is invalid; execution remains held')
+        return value
 
     def pending_approvals(self) -> list[dict]:
         """Read current, unresolved challenges for the local human decision page."""
@@ -466,6 +485,79 @@ class Store:
             inventory = self._ledger_inventory(destination)
         return {'path': str(target), 'sha256': hashlib.sha256(target.read_bytes()).hexdigest(),
                 'tables': inventory, 'created_at': now(), 'source_opened_read_only': self.read_only}
+
+    @classmethod
+    def restore_backup(cls, backup: Path, state_dir: Path, worker_writable_roots: tuple[Path, ...],
+                       expected_sha256: str) -> dict:
+        """Create-only quiescent ledger restore; runtime/budget sidecars are not copied."""
+        if not re.fullmatch(r'[0-9a-f]{64}', expected_sha256):
+            raise Rejected('invalid_backup_identity', 'Use the exact SHA-256 returned by backup-ledger')
+        backup = backup.expanduser().absolute()
+        state_dir = state_dir.expanduser().absolute()
+        if os.path.lexists(state_dir):
+            raise Rejected('restore_destination_exists', 'Restore requires a fresh private destination; never overwrite current state')
+        if not backup.parent.is_dir():
+            raise Rejected('backup_not_found', 'The retained backup directory is unavailable')
+        private_state_dir(backup.parent, worker_writable_roots)
+        fd = os.open(backup, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, 'rb') as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
+                raise Rejected('unsafe_backup_permissions', 'Backup must be a private user-owned regular file')
+            if hashlib.sha256(stream.read()).hexdigest() != expected_sha256:
+                raise Rejected('backup_identity_mismatch', 'Backup bytes differ from the retained backup identity')
+        with sqlite3.connect(backup.as_uri() + '?mode=ro', uri=True) as source:
+            if source.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
+                raise Rejected('backup_failed', 'Retained backup integrity failed')
+            tables = {row[0] for row in source.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            if not {'work', 'concept', 'decision', 'challenge', 'operation'}.issubset(tables):
+                raise Rejected('invalid_backup', 'Backup must contain the existing AOS ledger schema')
+            if 'lifecycle' in tables and (source.execute('SELECT 1 FROM lifecycle WHERE admitted=1').fetchone()
+                    or source.execute('SELECT 1 FROM resource').fetchone()
+                    or source.execute("SELECT 1 FROM assignment WHERE state NOT IN ('completed','failed','cancelled')").fetchone()
+                    or source.execute("SELECT 1 FROM owned_stop WHERE state<>'stopped'").fetchone()
+                    or source.execute("SELECT 1 FROM worker_status WHERE state='running'").fetchone()):
+                raise Rejected('restore_ownership_held', 'Ledger-only restore requires quiescent work without admitted assignments, resources or unresolved runtime ownership')
+            inventory = cls._ledger_inventory(source)
+            directory = private_state_dir(state_dir, worker_writable_roots)
+            hold = {'format': 'aos-recovery-copy-hold-v1', 'status': 'recovery-copy-held',
+                    'backup_sha256': expected_sha256, 'recorded_at': now(), 'adoption_authorized': False,
+                    'reason': 'Ledger recovery copy only; runtime/shared-budget sidecars and live adoption are not restored'}
+            hold_fd = os.open(directory / 'restore-hold.json', os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(hold_fd, 'w', encoding='utf-8') as stream:
+                json.dump(hold, stream, sort_keys=True)
+                stream.flush()
+                os.fsync(stream.fileno())
+            # Persist the dispatch fence before the copied ledger can exist.
+            # A failed sync leaves the partial private destination for inspection.
+            for parent in (directory, directory.parent):
+                directory_fd = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                try:
+                    os.fsync(directory_fd)
+                finally:
+                    os.close(directory_fd)
+            target = directory / 'aos.sqlite3'
+            target_fd = os.open(target, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+            os.close(target_fd)
+            # Preserve any failed/partial destination as evidence; never overwrite it.
+            with sqlite3.connect(target) as destination:
+                source.backup(destination)
+                if (destination.execute('PRAGMA integrity_check').fetchone()[0] != 'ok'
+                        or cls._ledger_inventory(destination) != inventory):
+                    raise Rejected('restore_readback_failed', 'Restored ledger differs from the exact backup table identities')
+        restored = cls(directory, worker_writable_roots, read_only=True)
+        with restored._connection() as db:
+            decision_ids = [row[0] for row in db.execute('SELECT decision_id FROM decision')]
+        for decision_id in decision_ids:
+            restored.verify_decision(decision_id)
+        if hashlib.sha256(backup.read_bytes()).hexdigest() != expected_sha256:
+            raise Rejected('backup_identity_mismatch', 'Backup changed during restore; retain the failed destination')
+        return {'state_dir': str(directory), 'backup_sha256': expected_sha256,
+                'restored_sha256': hashlib.sha256(target.read_bytes()).hexdigest(), 'tables': inventory,
+                'verified_decisions': decision_ids, 'readback': 'verified',
+                'recovery_hold': hold,
+                'runtime_sidecars_restored': False, 'shared_budget_sidecars_restored': False,
+                'runtime_dispatch_restored': False, 'live_migration': False}
 
     @staticmethod
     def _startup_recovery_evidence(bundle: dict) -> dict:

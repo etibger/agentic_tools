@@ -151,6 +151,21 @@ def dashboard(snapshot: dict) -> dict:
                           'package_revision': challenge['concept_revision'], 'package_sha256': challenge['digest'],
                           'answer_destination': 'Use the separately qualified human decision surface; this dashboard is read-only.'})
     blockers = [{'title': b['code'], **b} for b in run.get('technical_blockers', [])]
+    if source.get('recovery_hold'):
+        blockers.append({'title': 'Recovery copy is held', 'owner': 'coordinator',
+                         'detail': 'This ledger is a recovery copy, not adopted execution authority. Runtime and shared-budget sidecars were not restored.',
+                         'next_action': 'Use the original shared ledger; live adoption requires its separately authorized procedure.'})
+    for name, satisfied in run.get('technical_prerequisites', {}).items():
+        if satisfied is not True:
+            blockers.append({'title': 'Technical prerequisite: ' + name, 'owner': 'coordinator',
+                             'detail': 'Named technical evidence is unmet; the saved concept decision is retained.',
+                             'next_action': 'Reconcile this named fact before first admission; do not request unchanged approval again.'})
+    local_history = deepcopy(snapshot.get('local_history', {'health': 'unconfigured', 'records': [],
+                                'boundary': 'Local history journal not configured; external publication unqualified'}))
+    if local_history['health'] == 'failed':
+        blockers.append({'title': 'Local history collection failed', 'owner': 'coordinator',
+                         'detail': 'Retaining any last verified local history; no publication success is inferred.',
+                         'next_action': 'Restore the configured local journal and read back the same milestone identities.'})
     projection = snapshot['freshness']['projection']
     if projection['health'] == 'stale-or-conflicting':
         blockers.append({'title': 'Recorded projection differs from source', 'owner': 'coordinator',
@@ -165,13 +180,18 @@ def dashboard(snapshot: dict) -> dict:
                          'next_action': 'Explicitly restart/reconcile exact saved ownership before further dispatch.'})
     terminal = {'completed', 'failed', 'cancelled'}
     current = [a for a in assignments if a['state'] not in terminal]
+    delivery = run.get('delivery')
     def node(a: dict, index: int) -> dict:
         status = {'proposed': 'ready', 'sent': 'waiting', 'acknowledged': 'waiting', 'observed_active': 'active',
                   'completed': 'review', 'failed': 'failed', 'cancelled': 'held'}.get(a['state'], 'held')
         if a['kind'] == 'assessment' and a['state'] in ('proposed', 'sent', 'acknowledged'):
             status = 'review'
+        if a['state'] == 'completed':
+            output_candidate = (a.get('result') or {}).get('candidate') or a.get('candidate')
+            status = 'accepted' if delivery and delivery.get('accepted') and output_candidate == delivery['candidate'] else 'held'
         return {'id': a['assignment_id'], 'title': a['kind'].replace('_', ' ').title(), 'owner': a['executor'],
-                'status': status, 'summary': 'Assignment ' + a['state'] + '; completion does not independently accept the workflow.',
+                'status': status, 'summary': ('Historical completed output; see its saved candidate and disposition. It is not a current review queue.' if a['state'] == 'completed' else
+                                            'Assignment ' + a['state'] + '; completion does not independently accept the workflow.'),
                 'wait_reason': ('Observed activity: ' + str(a.get('observed_active_at')) if a.get('observed_active_at') else 'No observed-active receipt'),
                 'observed_at': a.get('terminal_at') or a.get('observed_active_at') or a['created_at'],
                 'depends_on': [], 'column': index, 'row': 0, 'kind': 'action'}
@@ -198,7 +218,6 @@ def dashboard(snapshot: dict) -> dict:
                 'summary': 'Future independent review is a handoff; it is not a current review queue.',
                 'next_action': 'Inspect recorded assignment owners and blockers.', 'source_revision': source['revision'],
                 'observed_at': observed, 'provenance': snapshot['source_digest'], 'nodes': nodes}
-    delivery = run.get('delivery')
     envelope = concepts.get(source.get('current_concept'), {}).get('package', {}).get('execution_envelope', {})
     budget = {'assignment_limit': envelope.get('max_assignments'), 'assignments_recorded': len(assignments),
               'per_assignment_seconds': envelope.get('max_seconds'), 'repair_limit': envelope.get('max_repairs'),
@@ -223,9 +242,13 @@ def dashboard(snapshot: dict) -> dict:
                         + ' · runtime ' + str(a.get('runtime_model') or 'unavailable') + '/' + str(a.get('runtime_effort') or 'unavailable')
                         + ' · observed active ' + str(a.get('observed_active_at') or 'unavailable')} for a in current],
             'watchdog': {'id': None, 'status': 'Read-only collector; refresh invokes no models', 'last_audit_at': observed},
-            'outputs': {'di': {'status': 'Exact package retained in source ledger'}, 'lessons': {'status': 'Local archive qualification only; live publication unqualified'}},
+            'outputs': {'di': {'status': 'Exact package retained in source ledger'},
+                        'lessons': {'status': 'Local history ' + local_history['health'] + ': ' + str(len(local_history['records'])) + ' milestone(s); external publication unqualified'}},
+            'local_history': local_history,
             'usage': _usage(source, observed), 'evidence': [snapshot['source_digest']],
             'budget': budget,
             'findings': ['Worker health: ' + snapshot['freshness']['worker']['health'],
                          'Recorded assignments: ' + str(len(assignments)) + ' / approved limit ' + str(envelope.get('max_assignments', 'unavailable')),
-                         budget['shared_runtime_reservations']]}
+                         budget['shared_runtime_reservations']]
+                        + ['Local milestone ' + item['milestone'] + ': revision ' + str(item['source_revision'])
+                           + ', ' + item['status'] + '; historical local record, no external publication' for item in local_history['records']]}

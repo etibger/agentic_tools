@@ -100,6 +100,7 @@ def test_current_assignments_distinguish_future_review_from_history(tmp_path):
     after = dashboard(collect(store, 'Q1'))
     assert after['agents'] == []
     assert len(after['phase_graph']['nodes']) == 2
+    assert all(node['status'] == 'accepted' for node in after['phase_graph']['nodes'])
     assert [n['title'] for n in after['phase_flow']['nodes']] == ['Concept decision', 'Current disposition']
     assert after['stage_status'] == 'Concept approved · Execution delivered'
 

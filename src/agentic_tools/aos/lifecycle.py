@@ -182,6 +182,11 @@ def view_in(db: sqlite3.Connection, work_id: str) -> dict:
     projection = db.execute('SELECT * FROM projection WHERE work_id=?', (work_id,)).fetchone()
     source['projection'] = {'source_revision': projection['source_revision'], 'collected_at': projection['collected_at'],
                             'health': 'current' if projection['source_digest'] == digest(source) else 'stale-or-conflicting'} if projection else {'health': 'uncollected'}
+    # Read-only additions are outside the existing canonical projection shape.
+    # Otherwise an unchanged pre-upgrade revision would falsely look corrupt.
+    run = db.execute('SELECT contract FROM lifecycle WHERE work_id=?', (work_id,)).fetchone()
+    source['technical_prerequisites'] = json.loads(run['contract'])['prerequisites'] if run else {}
+    source['prerequisite_evidence'] = [json.loads(r[0]) for r in db.execute("SELECT detail FROM lifecycle_event WHERE work_id=? AND kind='prerequisites_reconciled' ORDER BY event_id", (work_id,))]
     service = db.execute('SELECT * FROM worker_status WHERE singleton=1').fetchone()
     if service:
         age = max(0, (datetime.now(timezone.utc) - datetime.fromisoformat(service['heartbeat'])).total_seconds())
@@ -272,6 +277,52 @@ class Lifecycle:
             raise Rejected('contract_not_found', 'Register a contract before execution')
         return row, json.loads(row['contract'])
 
+    def reconcile_prerequisites(self, operation_id: str, work_id: str, expected_work_revision: int,
+                                digest: str, evidence: dict) -> dict:
+        """Record named technical facts before the first admission, never scope/approval."""
+        if not isinstance(evidence, dict) or not evidence:
+            raise Rejected('invalid_prerequisite_evidence', 'Named observations and durable evidence references are required')
+        for item in evidence.values():
+            try:
+                valid = (isinstance(item, dict) and set(item) == {'satisfied', 'reference', 'observed_at'}
+                         and type(item['satisfied']) is bool and isinstance(item['reference'], str)
+                         and bool(item['reference'].strip()) and len(item['reference']) <= 4096
+                         and isinstance(item['observed_at'], str)
+                         and datetime.fromisoformat(item['observed_at']).tzinfo is not None)
+            except ValueError:
+                valid = False
+            if not valid:
+                raise Rejected('invalid_prerequisite_evidence', 'Each fact needs a boolean, durable reference and timezone-qualified observation time')
+        self.reconcile(work_id)
+        payload = self._command_payload(['reconcile_prerequisites', work_id, evidence], expected_work_revision, digest)
+        with self.store._transaction() as db:
+            if prior := self.store._prior(db, operation_id, payload):
+                return prior
+            self._command_guard(db, work_id, expected_work_revision, digest)
+            run, contract = self._run(db, work_id)
+            if (run['admitted'] or run['control'] != 'none' or run['execution'] not in ('held', 'paused')
+                    or db.execute('SELECT 1 FROM assignment WHERE work_id=?', (work_id,)).fetchone()
+                    or db.execute('SELECT 1 FROM resource WHERE work_id=?', (work_id,)).fetchone()
+                    or db.execute("SELECT 1 FROM owned_stop WHERE work_id=? AND state<>'stopped'", (work_id,)).fetchone()):
+                raise Rejected('prerequisite_ownership_held', 'Technical facts may change only before first admission, without assignment/resource ownership')
+            if self._approved_envelope_errors(db, work_id, contract):
+                raise Rejected('prerequisite_scope_mismatch', 'Retain the exact approved package and execution envelope')
+            approved = db.execute("""SELECT 1 FROM decision d JOIN decision_readback r ON d.decision_id=r.decision_id
+                WHERE d.work_id=? AND d.concept_revision=? AND d.digest=? AND d.outcome='approved' AND r.status='verified'""",
+                (work_id, contract['concept_revision'], contract['concept_digest'])).fetchone()
+            if not approved:
+                raise Rejected('approval_required', 'Technical reconciliation cannot replace exact verified Concept Approval')
+            if set(evidence) - set(contract['prerequisites']):
+                raise Rejected('foreign_prerequisite', 'Only prerequisite names already fixed by the approved package may be reconciled')
+            for key, item in evidence.items():
+                contract['prerequisites'][key] = item['satisfied']
+            db.execute('UPDATE lifecycle SET contract=? WHERE work_id=?', (canonical(contract), work_id))
+            self._touch(db, work_id, 'prerequisites_reconciled', {'operation_id': operation_id, 'evidence': evidence})
+            return self.store._record(db, operation_id, payload,
+                {'work_id': work_id, 'work_revision': self.store._work(db, work_id)['revision'],
+                 'technical_prerequisites': contract['prerequisites'], 'approval_preserved': True,
+                 'execution': run['execution'], 'next_action': 'Read status and explicitly retry admission with a fresh operation ID'})
+
     def _approved_envelope_errors(self, db: sqlite3.Connection, work_id: str, contract: dict) -> list[str]:
         concept = db.execute('SELECT package FROM concept WHERE work_id=? AND revision=? AND digest=?',
                              (work_id, contract['concept_revision'], contract['concept_digest'])).fetchone()
@@ -330,6 +381,8 @@ class Lifecycle:
         run, contract = self._run(db, work_id)
         work = self.store._work(db, work_id)
         errors = self._approved_envelope_errors(db, work_id, contract)
+        if self.store.recovery_hold():
+            errors.append('Recovery copy is not adopted; dispatch remains held and runtime/shared-budget sidecars are not restored')
         decision = db.execute("""SELECT d.*,r.status AS readback_status FROM decision d
             LEFT JOIN decision_readback r ON r.decision_id=d.decision_id WHERE d.work_id=?
             AND d.concept_revision=? AND d.digest=? AND d.outcome='approved' ORDER BY d.created_at DESC LIMIT 1""",

@@ -40,9 +40,10 @@ def command(source, name, *args, code=0, env=None, cwd=None):
 
 
 @contextmanager
-def running(source, *, env=None, cwd=None, port=0, alias="fixture"):
+def running(source, *, env=None, cwd=None, port=0, alias="fixture", archive_journal=None):
+    extra = ["--archive-journal", str(archive_journal)] if archive_journal is not None else []
     process = subprocess.Popen([sys.executable, "-m", "agentic_tools.aos.cli", "dashboard-serve", *common(source),
-                                "--work", alias + "=Q1", "--port", str(port)],
+                                "--work", alias + "=Q1", "--port", str(port), *extra],
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env, cwd=cwd)
     try:
         assert select.select([process.stdout], [], [], 10)[0], "Dashboard did not start"

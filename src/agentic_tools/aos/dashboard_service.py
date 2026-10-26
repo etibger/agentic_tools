@@ -95,7 +95,7 @@ def _public(receipt: dict) -> dict:
 
 
 class DashboardService:
-    def __init__(self, store: Store, views: dict[str, str], port: int):
+    def __init__(self, store: Store, views: dict[str, str], port: int, *, archive_journal: Path | None = None):
         if not store.read_only:
             raise Rejected("read_only_required", "Dashboard collection requires a read-only authoritative store")
         if type(port) is not int or not 0 <= port <= 65535:
@@ -104,6 +104,11 @@ class DashboardService:
         work_views([alias + "=" + work_id for alias, work_id in views.items()])
         self.store, self.views, self.port = store, views, port
         self.collectors = {alias: SnapshotCollector(store, work_id) for alias, work_id in views.items()}
+        self.history_collectors = {}
+        if archive_journal is not None:
+            from .archive import LocalHistoryCollector, coordinator_journal
+            archive_journal = coordinator_journal(archive_journal, store.worker_writable_roots)
+            self.history_collectors = {alias: LocalHistoryCollector(archive_journal, work_id) for alias, work_id in views.items()}
         self.html = renderer()
         self.receipt = None
         self.server = None
@@ -135,6 +140,7 @@ class DashboardService:
             self.receipt = {"format": "aos-dashboard-service-v1", "instance_id": uuid.uuid4().hex,
                             "state": "listening", "pid": os.getpid(), "started_at": now(), "port": self.port,
                             "origin": f"http://127.0.0.1:{self.port}", "views": self.views,
+                            "history_configured": bool(self.history_collectors),
                             "version": capabilities(), "renderer_digest": "sha256:" + hashlib.sha256(self.html).hexdigest(),
                             "stop_token": secrets.token_urlsafe(32)}
             _write_receipt(self.store.directory, self.receipt)
@@ -219,8 +225,8 @@ def handler_for(service: DashboardService):
                     links = "".join(f'<li><a href="/work/{alias}/dashboard.html">{escape(work)}</a></li>' for alias, work in service.views.items())
                     self.response(HTTPStatus.OK, ("<!doctype html><meta charset=utf-8><title>AOS dashboards</title><h1>AOS dashboards</h1><ul>" + links + "</ul>").encode(), "text/html; charset=utf-8")
                     return
-                routes = {f"/work/{alias}/{resource}": (alias, resource) for alias in service.views
-                          for resource in ("dashboard.html", "workflow-state.json", "snapshot.json")}
+                resources = ("dashboard.html", "workflow-state.json", "snapshot.json") + (("history.json",) if service.history_collectors else ())
+                routes = {f"/work/{alias}/{resource}": (alias, resource) for alias in service.views for resource in resources}
                 if location.path not in routes:
                     self.error(HTTPStatus.NOT_FOUND, "dashboard_resource_not_found")
                     return
@@ -228,7 +234,12 @@ def handler_for(service: DashboardService):
                 if resource == "dashboard.html":
                     self.response(HTTPStatus.OK, service.html, "text/html; charset=utf-8")
                 else:
+                    if resource == "history.json":
+                        self.response(HTTPStatus.OK, service.history_collectors[alias].collect())
+                        return
                     snapshot = service.collectors[alias].collect()
+                    if service.history_collectors:
+                        snapshot['local_history'] = service.history_collectors[alias].collect()
                     self.response(HTTPStatus.OK, snapshot if resource == "snapshot.json" else dashboard(snapshot))
             except (OSError, ValueError, KeyError, TypeError, ArithmeticError):
                 self.error(HTTPStatus.SERVICE_UNAVAILABLE, "dashboard_collection_unavailable")

@@ -10,26 +10,37 @@ import os
 import sqlite3
 import stat
 from contextlib import contextmanager
+from copy import deepcopy
 from pathlib import Path
+from threading import Lock
 
 from .projection import validate_snapshot
 from .store import Rejected, canonical, digest, identifier, now
 
 
+def coordinator_journal(path: Path, worker_writable_roots: tuple[Path, ...]) -> Path:
+    """Keep coordinator history outside every declared assigned-worker root."""
+    path = path.expanduser().absolute()
+    if any(path.resolve().is_relative_to(root.expanduser().resolve()) for root in worker_writable_roots):
+        raise Rejected('worker_writable_history', 'Configured local history must be outside assigned-worker writable roots')
+    return path
+
+
 @contextmanager
-def _database(path: Path):
+def _database(path: Path, *, read_only: bool = False):
     path = path.expanduser().absolute()
     if any(p.is_symlink() for p in (path, *path.parents)):
         raise Rejected('unsafe_archive_path', 'Local archive database path must not contain symlinks')
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    if not read_only:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(path, (os.O_RDONLY if read_only else os.O_CREAT | os.O_RDWR) | os.O_NOFOLLOW, 0o600)
     try:
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
             raise Rejected('unsafe_archive_permissions', 'Local archive database must be a private user-owned regular file')
     finally:
         os.close(fd)
-    db = sqlite3.connect(path)
+    db = sqlite3.connect(path.as_uri() + '?mode=ro', uri=True) if read_only else sqlite3.connect(path)
     db.row_factory = sqlite3.Row
     try:
         with db:
@@ -90,13 +101,18 @@ class ArchiveJournal:
     This separate journal does not migrate or modify the decision/runtime ledger.
     Every failed/interrupted attempt remains alongside later retry evidence.
     """
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, read_only: bool = False):
         self.path = path
+        self.read_only = read_only
         self._fault = lambda stage: None
-        with _database(path) as db:
+        with _database(path, read_only=read_only) as db:
             tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             if tables - {'intent', 'attempt', 'sqlite_sequence'}:
                 raise Rejected('archive_database_scope', 'Archive intent journal must be separate from authoritative state')
+            if read_only:
+                if not {'intent', 'attempt'}.issubset(tables):
+                    raise Rejected('archive_unavailable', 'Local history journal schema is unavailable')
+                return
             db.executescript('''
                 CREATE TABLE IF NOT EXISTS intent (
                     intent_id TEXT PRIMARY KEY, fingerprint TEXT NOT NULL, work_id TEXT NOT NULL,
@@ -109,6 +125,8 @@ class ArchiveJournal:
             ''')
 
     def prepare(self, intent_id: str, snapshot: dict, milestone: str, destination: LocalFakeDestination) -> dict:
+        if self.read_only:
+            raise Rejected('read_only', 'Local history collection cannot prepare or publish milestones')
         identifier(intent_id)
         if type(destination) is not LocalFakeDestination:
             raise Rejected('local_destination_required', 'Only the local fake destination is implemented and qualified')
@@ -141,7 +159,7 @@ class ArchiveJournal:
         return result
 
     def read(self, intent_id: str) -> dict:
-        with _database(self.path) as db:
+        with _database(self.path, read_only=self.read_only) as db:
             row = db.execute('SELECT * FROM intent WHERE intent_id=?', (intent_id,)).fetchone()
             if row is None:
                 raise Rejected('archive_intent_missing', 'Prepare and read back an exact-source intent first')
@@ -151,6 +169,8 @@ class ArchiveJournal:
             return result
 
     def publish_local(self, intent_id: str, destination: LocalFakeDestination) -> dict:
+        if self.read_only:
+            raise Rejected('read_only', 'Local history collection cannot prepare or publish milestones')
         if type(destination) is not LocalFakeDestination:
             raise Rejected('local_destination_required', 'No real external publication adapter exists')
         intent = self.read(intent_id)
@@ -190,3 +210,57 @@ class ArchiveJournal:
             with _database(self.path) as db:
                 db.execute("UPDATE attempt SET state='failed',finished_at=?,detail=? WHERE id=?", (now(), type(error).__name__ + ': ' + str(error), attempt))
             raise
+
+    def history(self, work_id: str) -> list[dict]:
+        """One read transaction; no source payloads, file paths or raw errors exposed."""
+        identifier(work_id)
+        with _database(self.path, read_only=True) as db:
+            db.execute('BEGIN')
+            records = []
+            for row in db.execute('SELECT * FROM intent WHERE work_id=? ORDER BY created_at,intent_id', (work_id,)):
+                payload = json.loads(row['payload'])
+                if (payload['work_id'] != work_id or digest(payload['source']) != payload['source_digest']
+                        or row['fingerprint'] != digest([payload, row['destination']])):
+                    raise Rejected('archive_source_mismatch', 'Local history source differs from its exact retained intent')
+                attempts = []
+                for attempt in db.execute('SELECT * FROM attempt WHERE intent_id=? ORDER BY id', (row['intent_id'],)):
+                    receipt = json.loads(attempt['receipt']) if attempt['receipt'] else None
+                    if receipt and (receipt['source_digest'] != payload['source_digest']
+                                    or receipt['source_revision'] != payload['source_revision']
+                                    or receipt['external_publication'] is not False):
+                        raise Rejected('archive_receipt_readback_failed', 'Local history receipt differs from its retained source')
+                    attempts.append({'id': attempt['id'], 'state': attempt['state'], 'started_at': attempt['started_at'],
+                                     'finished_at': attempt['finished_at'],
+                                     'error_class': attempt['detail'].split(':', 1)[0] if attempt['detail'] else None,
+                                     'receipt': {key: receipt[key] for key in ('source_digest', 'source_revision', 'saved_version', 'readback', 'external_publication')}
+                                                if receipt else None})
+                records.append({'intent_id': row['intent_id'], 'work_id': work_id, 'milestone': row['milestone'],
+                                'source_revision': payload['source_revision'], 'source_digest': payload['source_digest'],
+                                'prepared_at': row['created_at'], 'attempts': attempts,
+                                'status': attempts[-1]['state'] if attempts else 'prepared-local', 'external_publication': False})
+            return records
+
+
+class LocalHistoryCollector:
+    """Read-only local history observation; retain earlier attempts on collection failure."""
+    def __init__(self, path: Path, work_id: str):
+        self.path, self.work_id = path, work_id
+        self.last_good = None
+        self._lock = Lock()
+
+    def collect(self) -> dict:
+        with self._lock:
+            attempted = now()
+            try:
+                records = ArchiveJournal(self.path, read_only=True).history(self.work_id)
+                value = {'health': 'current', 'work_id': self.work_id, 'records': records, 'records_digest': digest(records),
+                         'observed_at': attempted, 'last_attempt_at': attempted, 'failure': None,
+                         'boundary': 'Local preparation/fake destination only; external publication unqualified'}
+                self.last_good = deepcopy(value)
+                return value
+            except (OSError, ValueError, KeyError, TypeError, sqlite3.Error) as error:
+                value = deepcopy(self.last_good) if self.last_good else {
+                    'health': 'unavailable', 'work_id': self.work_id, 'records': [], 'records_digest': None,
+                    'observed_at': None, 'boundary': 'Local history unavailable; no external publication inferred'}
+                value.update(health='failed', last_attempt_at=attempted, failure=type(error).__name__ + ': local history collection failed')
+                return value

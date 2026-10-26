@@ -68,6 +68,22 @@ class ConceptRequest(BaseModel):
     execution_envelope: ExecutionEnvelope
 
 
+class PrerequisiteObservation(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    satisfied: bool
+    reference: str = Field(min_length=1, max_length=4096)
+    observed_at: str = Field(min_length=1)
+
+
+class PrerequisiteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    operation_id: str
+    work_id: str
+    expected_work_revision: int = Field(ge=1)
+    digest: str
+    evidence: dict[str, PrerequisiteObservation] = Field(min_length=1)
+
+
 def _unique_object(pairs: list[tuple[str, object]]) -> dict:
     result = {}
     for key, value in pairs:
@@ -143,7 +159,8 @@ def capabilities() -> dict:
             "source_scope": "AOS Python package files; excludes state, configuration, dependencies and documentation",
             "coordinator_commands": ["introduce-work", "present-concept", "register-contract", "prepare-decision", "decide-serve",
                                      "admit", "status", "pause", "resume", "cancel", "worker", "version",
-                                     "dashboard-serve", "dashboard-inspect", "dashboard-stop"],
+                                     "dashboard-serve", "dashboard-inspect", "dashboard-stop", "reconcile-prerequisites",
+                                     "backup-ledger", "restore-ledger"],
             "dashboard_service_version": 1,
             "workflow_control_transport": "trusted coordinator CLI using Store/Lifecycle/Worker",
             "coordinator_accepts_approval_answer": False, "mcp_workflow_control": False,

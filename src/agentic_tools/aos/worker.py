@@ -116,6 +116,8 @@ class Worker:
         self._fault = lambda stage: None
 
     def __enter__(self) -> 'Worker':
+        if self.lifecycle.store.recovery_hold():
+            raise Rejected('recovery_copy_held', 'A restored recovery copy cannot run workers or reset runtime/shared-budget ownership')
         path = self.lifecycle.store.directory / 'worker.lock'
         fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
         self._lock = os.fdopen(fd, 'a+')
