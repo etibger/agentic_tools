@@ -21,7 +21,7 @@ The link opens the live GitHub-hosted HTML guide from any device. Both the guide
 
 The new entry points are pilot manual contracts. External publication, dashboards, recurring monitoring and separate narrative roles are explicit choices. The current gate checker supports the extended feature record only; automatic execution of arbitrary toolbox contracts is not implemented. The separately bounded AOS runner implements approved bug/feature handoffs. Copying a template does not start agents or services.
 
-The approved [AOS package](docs/aos-concept.md) has independently accepted code and a bounded local desktop journey at candidate `d527ea5`: saved HTTPS decisions, supported commands, a real two-agent Python fixture, automatic handoff, pause/resume, worker replay, actual app close/reopen and reversible local service adoption. **Herdr execution is not ready:** the current executor is specific to Python qualification fixtures and their shared allowance; native check adapters, product allowances and the receiving-chat handoff remain open. The [operator guide](docs/aos-operator.md) identifies the supported route. MCP workflow controls, automatic chat wake-up and general installation/update remain unavailable or deferred. [Qualification boundaries](docs/aos-validation.md) preserve those limits.
+The approved [AOS package](docs/aos-concept.md) has independently accepted code and a bounded local desktop journey at candidate `d527ea5`: saved HTTPS decisions, supported commands, a real two-agent Python fixture, automatic handoff, pause/resume, worker replay, actual app close/reopen and reversible local service adoption. The component 0.2.4 source candidate adds generic evidence dispatch, separate reusable pytest/native-build/Cargo adapters, durable product allowances and return navigation after saved decisions. **Herdr execution is not ready:** this candidate still requires independent acceptance, the exact approved native operating proof and receiving-chat verification. The [operator guide](docs/aos-operator.md) identifies the supported route and explicit binding requirements. MCP workflow controls, automatic chat wake-up and general installation/update remain unavailable or deferred. [Qualification boundaries](docs/aos-validation.md) preserve those limits.
 
 ## Extended multi-agent feature recipe
 
@@ -48,7 +48,7 @@ Generated HTML lives in site/ and stays outside Git. The build copies canonical 
 | templates/ | Shared contract, three toolbox kickoffs, extended feature recipe and supporting evidence templates |
 | docs/ | Toolbox specification, worked examples, extended guide, communication figure and synthetic dashboard |
 | scripts/ | Documentation build hook, gate-record, dashboard and publication checks |
-| src/agentic_tools/aos/ and tests/ | Bounded local AOS implementation and synthetic/native regression checks |
+| src/agentic_tools/aos/, src/agentic_tools/check_adapters/ and tests/ | Generic bounded AOS coordination, separate reusable evidence interpreters and regression checks |
 | .github/workflows/ | Ubuntu documentation checks/Pages publication and macOS AOS regressions |
 | uv.lock | Locked documentation, AOS runtime and development dependencies |
 

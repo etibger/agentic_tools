@@ -6,7 +6,7 @@ These commands establish an operator interface. Actual desktop integration, serv
 
 ## Current qualified boundary
 
-Candidate `d527ea5` has separate independent acceptance for the bounded Python fixture and actual local desktop journey. The current real executor still requires the original qualification budget, caps a recipe at five minutes, and interprets verification through pytest/JUnit. Do not present it as a ready Herdr/Rust executor, spend the remaining qualification allowance on product work, or reset the ledger. Reusable native check adapters and separately approved product allowances are proposed work; product commands and acceptance limits belong to the owning project.
+Candidate `d527ea5` has separate independent acceptance for the bounded Python fixture and actual local desktop journey. The component 0.2.4 source candidate adds reusable check adapters and separate approved product allowances under the focused completion amendment. It still needs independent candidate acceptance, the exact approved native operating proof and receiving-chat verification. Do not present authored code or a copied-project diagnostic as Herdr readiness. Product commands, toolchain access and acceptance limits belong to the owning project.
 
 Use the explicit CLI state directory and worker roots for the intended shared service. A connector reporting version 0.2.3 can still point at earlier prototype state: if that connector cannot find work which the authoritative ledger contains, investigate the connection without recreating the approval. MCP workflow controls are unavailable. Verify the receiving chat against the same known work, source identity and dashboard before handoff; a check in another chat does not satisfy that requirement.
 
@@ -20,7 +20,7 @@ uv run aos version
 uv run aos --help
 ```
 
-`version` returns the component and distribution versions, command schema version, and a SHA-256 digest of the actual AOS Python package files. This identity excludes state, configuration, dependencies and documentation; retain the tested Git commit separately. `status` includes the same receipt under `operator`. Neither command invokes a model or reconciles work.
+`version` returns the component and distribution versions, command schema version, and a SHA-256 digest covering both the AOS and reusable check-adapter Python package files. It also reports every allowlisted adapter's ID, integer version, evidence kind and adapter-package digest. These identities exclude state, configuration, dependencies and documentation; retain the tested Git commit separately. `status` includes the same receipt under `operator`. Neither command invokes a model or reconciles work.
 
 Every state command requires `--state-dir` and one or more `--worker-writable-root` options. Use the same authoritative directory and complete root list across the coordinator, decision server and worker. State must be private, user-owned, mode 0700, outside every worker-writable root, and inaccessible to assigned agents. The runtime sandbox must enforce that denial, including decision credentials and the loopback decision endpoint. A root declaration or an `--audience` label cannot replace OS enforcement. Assigned agents must not receive the coordinator connection or decision capabilities.
 
@@ -51,6 +51,45 @@ Keep an operation ID and its complete arguments stable across a retry. The saved
 Commands emit JSON results. Exit 0 means the command completed, including replay of an existing result; inspect the result. Exit 2 means rejection or unavailable input/state, with an error object on stderr (argument parser errors use normal argparse text). Exit 3 means an explicit operational hold: admission/resume has recorded blockers, or a dashboard listener is unavailable. Details appear on stdout. A held admission is not dispatch permission. The foreground worker prints no per-cycle result; use status. Preserve error evidence before correcting the named cause.
 
 Pause fences new dispatch. An already running assignment may complete; its result and pause survive worker restart. Resume rechecks existing authority and prerequisites. Cancel persists `cancel_requested`; the worker must subsequently reconcile its exact owned effects. Resources remain owned while effects are unknown. Stopping a foreground worker process does not cancel work or prove child cleanup. Terminal delivered/cancelled work cannot be resumed.
+
+After an approve, decline or cancel answer is saved, **Back to decisions** performs a same-tab GET of the current decision list/status. It does not resubmit the form. The outcome and exact saved identity stay visible on the result page; replaying the same answer reads that original decision.
+
+## Check adapters and allowances
+
+AOS dispatches exact argument lists, owns processes and validates normalized evidence. The separate `agentic_tools.check_adapters` package supplies a static allowlist: `pytest-v1`, `native-build-v1` and `cargo-test-v1`. There is no runtime discovery or worker-supplied adapter code. A recipe check selects `result_kind` as `pytest`, `build` or `cargo-test`; an optional `adapter_id` must agree. Historical untyped recipes retain their original pytest/JUnit interpretation. Typed recipes must supply an explicit `probe_interpreter`; the permission probe never infers Python from a native build command.
+
+Only the pytest adapter appends its historical JUnit/cache-provider arguments. Native build and Cargo commands retain their exact approved arguments. A literal `{output}` inside an argument is replaced with that attempt's isolated output directory without shell evaluation. The project must approve the full toolchain command and readable roots. A denied loader dependency is a technical blocker; adapter selection cannot expand permissions or alter the approved recipe. Any required loader environment belongs in the project's exact argument list, not in AOS product logic.
+
+Each result binds its candidate, adapter identity, exact executed arguments, exit code, normalized counts, raw stdout/stderr hashes, adapter input artifacts such as JUnit, and combined-output hash. A build reports kind `build` and zero selected tests; it cannot satisfy a test obligation. Tests require recognized results, positive selection and every selected case passing. Failed, skipped-only, zero-test, malformed, missing-output and unrecognized results block acceptance. Cached native evidence is checked for raw-output drift before replay. The approved `runtime_recipe.checks` defines each named build/test obligation; a generic `check_kinds` map can also declare obligations for other evidence routes.
+
+Typed checks bind the selected adapter receipts from `aos version` through `execution_envelope.check_adapters`. Alternatively, when the approved package explicitly delegates named adapter selection to an existing technical prerequisite through `adapter_architecture.minimum_adapters`, the non-author assessor may produce this receipt after accepting the exact source candidate:
+
+```json
+{
+  "format": "aos-check-adapters-v1", "accepted": true, "independent": true,
+  "work_id": "EXAMPLE", "concept_digest": "sha256:EXACT_APPROVED_PACKAGE",
+  "runtime_recipe_digest": "sha256:EXACT_APPROVED_RECIPE",
+  "source_digest": "sha256:ACCEPTED_AOS_AND_ADAPTER_SOURCE",
+  "check_adapters": {},
+  "source_author": "approved source author", "assessor": "approved independent assessor"
+}
+```
+
+Replace the empty map with the exact selected adapter IDs and complete receipts from `aos version`; include only adapters used by that recipe. The author and assessor must be distinct approved team members, and the assessor cannot be the fixture writer. Store the receipt outside all worker-writable roots, then use the existing `reconcile-prerequisites` route to satisfy the already approved prerequisite. Its reference must be `aos-check-adapters-v1:RECEIPT_FILE_SHA256_HEX:/absolute/receipt.json`. Missing, altered, stale, symlinked or worker-writable receipts hold execution. This is trusted coordinator/independent-assessment evidence, not cryptographic human authentication or a new Concept Approval. It cannot introduce an adapter ID or scope absent from the approved package.
+
+Exactly one allowance is required in the approved envelope. `shared_qualification_budget` retains the original shared identity and ledger; its supported ceiling is ten jobs and 3,000 reserved seconds, with at most 300 seconds per job. A lower approved package remains limited to its own lower ceiling. An increased supported ceiling alone grants no jobs. Product execution instead requires all these explicit fields:
+
+```json
+{
+  "product_budget": {
+    "budget_id": "example-runtime-v1", "product_id": "example-product",
+    "ledger_directory": "/absolute/original-state",
+    "max_assignments": 2, "max_job_seconds": 300, "max_seconds": 600
+  }
+}
+```
+
+There is no default product allowance. Both allowance types use the original `codex-runtime.sqlite3` ledger. Historical attempts without budget metadata remain charged to the original qualification allowance, using the original full 300-second reservation when duration metadata is absent. Every failed or ambiguous launched intent keeps its slot and full reservation. Product ID and canonical source are durably bound to one allowance; renaming work, a budget, a source or a revision, restarting, or retrying cannot reset it. Different approved products retain separate totals. Product limits cannot be enlarged through this interface after first reservation; a future extension protocol requires separately defined authority. Restore copies remain dispatch-held and never reset runtime sidecars.
 
 ## Maintained dashboard process
 

@@ -1,6 +1,6 @@
 # AOS reproduction and qualification
 
-The bounded Q2 bug/feature milestone and T1–T5 code are locally accepted. The exact committed candidate `d527ea55433e27c8d6477fcfcc1d6a3246cbfaba` subsequently passed separate non-author T6 assessment of the actual bounded desktop journey. This includes a two-agent Python fixture, three passing fixed tests, automatic handoff, pause/resume, worker replay, actual app closure/reopen, permission/TLS checks, checked backups and local service adoption. **This is not full Herdr readiness:** the executor remains tied to pytest and the original Q2/Q3 allowance, and T7 receiving-chat verification is outstanding. No permanent installation or external release is claimed. The [operator guide](aos-operator.md) defines supported commands; the [concept](aos-concept.md#acceptance-and-failure-tests) retains A1–A12 unchanged.
+The bounded Q2 bug/feature milestone and T1–T5 code are locally accepted. The exact committed candidate `d527ea55433e27c8d6477fcfcc1d6a3246cbfaba` subsequently passed separate non-author T6 assessment of the actual bounded desktop journey. This includes a two-agent Python fixture, three passing fixed tests, automatic handoff, pause/resume, worker replay, actual app closure/reopen, permission/TLS checks, checked backups and local service adoption. The component 0.2.4 source candidate adds generic adapter dispatch, separate reusable pytest/native-build/Cargo interpreters, durable product allowance separation and the decision return link. **This is not full Herdr readiness:** independent acceptance of this candidate, the exact approved native operating proof and receiving-chat verification remain separate gates. No permanent installation or external release is claimed. The [operator guide](aos-operator.md) defines supported commands and binding schemas; the [concept](aos-concept.md#acceptance-and-failure-tests) retains A1–A12 unchanged.
 
 ## Fresh source checks
 
@@ -28,6 +28,18 @@ The focused maintained regression command is:
 ```sh
 uv run pytest tests/test_aos_authority_regressions.py tests/test_aos_owned_stop.py tests/test_aos_capture_controls.py tests/test_aos_recovery_controls.py
 ```
+
+The additional adapter/allowance regression command is:
+
+```sh
+uv run pytest tests/test_aos_check_adapters.py tests/test_aos_codex_runtime.py tests/test_aos_approval_web.py
+```
+
+It covers normalized counts and build/test separation; positive, failed, zero and unrecognized Cargo summaries; historical pytest behavior; exact adapter version/digest binding; missing/altered/non-independent/stale/worker-writable qualification; candidate/raw-output drift; explicit probe interpreter and argument-only output substitution; original seven-reservation migration; separate product totals and durable no-reset limits; and return navigation after all saved answers/replay with empty and nonempty pending lists. Existing native tests continue to exercise cancellation, deadline, ordinary child cleanup, unknown ownership, process death and restart without reexecution. Synthetic commands and copied-project native diagnostics are author bring-up evidence, not an approved real agent run.
+
+The prepared native recipe must be tested under its exact OS profile before consuming its real jobs. Loader libraries, canonical path aliases, compiler/SDK access and denied caches can fail independently of result parsing. Preserve the original failed command and expose the minimal permission/argument correction for the exact decision path; never silently widen the recipe or count an expanded copied-project probe as the approved operating proof.
+
+Reuse of accepted desktop close/reopen evidence requires a retained source-impact comparison. This candidate changes native command construction, evidence validation and allowance accounting, while preserving the standalone worker and its process ownership protocol. Unchanged supervisor, reconciliation and stop code plus affected passing regression checks support reuse of that specific awake-desktop observation; they do not establish a new native route, detached-process safety, sleep/logout behavior or product admission. Independent assessment must judge the exact comparison and remaining actual-host gates.
 
 Hosted AOS and documentation workflows execute only after an authorized push or workflow dispatch. A locally passing equivalent command is not a hosted CI result. Native child-process fixtures are ordinary owned synthetic commands, not real model or desktop qualification.
 
