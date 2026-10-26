@@ -52,6 +52,7 @@ nav:
   - Choose a workflow: quick-start.md
   - Toolbox specification: toolbox.md
   - AOS concept and approval: aos-concept.md
+  - AOS coordinator commands: aos-operator.md
   - Worked examples: worked-examples.md
   - Extended feature workflow:
       - Quick start: extended-feature-start.md

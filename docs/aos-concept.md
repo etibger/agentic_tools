@@ -66,6 +66,8 @@ uv run aos runtime-capabilities
 uv run pytest
 ```
 
+The maintained [coordinator command guide](aos-operator.md) covers the CLI route for exact concept/envelope registration, HTTPS decision preparation, guarded admission, status/version inspection and pause/resume/cancel through the existing engine. Its disposable checks use simulated outputs; actual-host qualification and Herdr admission remain separately held. Workflow mutations are not added to the MCP bridge.
+
 Start the prototype with `aos serve --state-dir <private-directory> --worker-writable-root <fixture-directory>`. Declare each worker-writable root. The authoritative directory must be outside those roots, owned by the user and private; permission bits alone do not isolate processes running as that same user. Actual worker sandbox denial must also be qualified. The `status` command reads an existing work record; `--audience worker` exposes only read tools and opens the database read-only.
 
 A local, ignored `.codex/config.toml` configures the `aos` server for a synthetic fixture. Project-scoped MCP configuration is a [supported connection mechanism](https://learn.chatgpt.com/docs/extend/mcp). The tools became available in this chat without an app restart or an invoked reload. Actual tool calls introduced synthetic work, presented its exact concept and read the same durable record. A fresh separate stdio process also read that work's revision and digest with no decision recorded. No persistent startup service was installed, and the active game chat was not altered.
