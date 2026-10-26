@@ -1,0 +1,48 @@
+// Exercise a real service-produced dashboard snapshot in the existing renderer.
+// This DOM substitute checks rendering/retention semantics, not visual layout.
+import fs from 'node:fs';
+import vm from 'node:vm';
+import assert from 'node:assert/strict';
+
+const input=JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const html=fs.readFileSync(new URL('../templates/dashboard.html',import.meta.url),'utf8');
+const source=html.match(/<script>([\s\S]+)<\/script>/)[1];
+let current=structuredClone(input),offline=false;
+const nodes=new Map(),storage=new Map();
+const makeNode=()=>({textContent:'',innerHTML:'',className:'',style:{},scrollLeft:0,scrollTop:0,clientWidth:900,clientHeight:400,offsetHeight:300,hidden:false,attributes:{},setAttribute(k,v){this.attributes[k]=v;},focus(){},setPointerCapture(){},releasePointerCapture(){}});
+const context=vm.createContext({document:{getElementById(id){if(!nodes.has(id))nodes.set(id,makeNode());return nodes.get(id);}},sessionStorage:{getItem:k=>storage.get(k)||null,setItem:(k,v)=>storage.set(k,v)},URL,Date,fetch:async()=>{if(offline)throw Error('offline');return {ok:true,json:async()=>structuredClone(current)};},setInterval:()=>0});
+vm.runInContext(source,context);
+await vm.runInContext('refresh()',context);
+assert.equal(nodes.get('approval-count').textContent,'No approvals pending');
+assert.match(nodes.get('stage-status').textContent,/Concept approved · Execution held/);
+assert.match(nodes.get('health').textContent,new RegExp('revision '+input.source_revision));
+assert.ok(nodes.get('health').textContent.includes(input.source_digest));
+assert.equal(nodes.get('usage-billed').textContent,'Unavailable');
+assert.equal(nodes.get('usage-total').textContent,'Unavailable');
+vm.runInContext('showPhaseDetail("current-disposition",true);scalePhase(1.25)',context);
+nodes.get('phase-scroll').scrollLeft=90;
+await vm.runInContext('refresh()',context);
+assert.match(nodes.get('phase-panel').innerHTML,/Current disposition/);
+assert.equal(nodes.get('phase-zoom').textContent,'125%');
+current.collector.health='failed';
+await vm.runInContext('refresh()',context);
+assert.match(nodes.get('health').textContent,/COLLECTION FAILED.*retaining last good source/);
+assert.equal(nodes.get('approval-count').textContent,'No approvals pending');
+current=structuredClone(input);
+current.phase_flow.source_revision+=1;
+await vm.runInContext('refresh()',context);
+assert.match(nodes.get('health').textContent,/Refresh failed: Service\/dashboard source identity mismatch.*retaining last good/);
+assert.match(nodes.get('stage-status').textContent,/Concept approved/);
+current=structuredClone(input);
+current.source_revision-=1;
+current.phase_flow.source_revision=current.phase_graph.source_revision=current.source_revision;
+await vm.runInContext('refresh()',context);
+assert.match(nodes.get('health').textContent,/Refresh failed: Older service source revision.*retaining last good/);
+current=structuredClone(input);
+current.observed_at='2000-01-01T00:00:00Z';
+await vm.runInContext('refresh()',context);
+assert.match(nodes.get('health').textContent,/STALE observation/);
+offline=true;
+await vm.runInContext('refresh()',context);
+assert.match(nodes.get('health').textContent,/Refresh failed: offline.*retaining last good/);
+console.log('Service/dashboard integration passed: exact identity, approval vs hold, collector failure, stale observation, unavailable billing, inspection retention and mismatched-view rejection.');

@@ -18,7 +18,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--version", action="version", version=f"AOS component {__version__}; agentic-tools distribution {version_receipt()['distribution_version'] or 'unavailable'}")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("runtime-capabilities", help="Inspect pinned SDK/API and runtime version; no model invocation")
-    for name in ("serve", "status", "prepare-decision", "decide-serve", "worker", "backup-ledger", "recover-startup-approval"):
+    for name in ('archive-publish-local', 'archive-read-local'):
+        command = commands.add_parser(name, help='Disposable local archive qualification only; no network publisher')
+        command.add_argument('--journal', type=Path, required=True)
+        command.add_argument('--intent-id', required=True)
+        if name == 'archive-publish-local':
+            command.add_argument('--fake-destination', type=Path, required=True)
+    for name in ("serve", "status", "archive-preview", "archive-prepare-local", "prepare-decision", "decide-serve", "worker", "backup-ledger", "recover-startup-approval"):
         command = commands.add_parser(name)
         command.add_argument("--state-dir", type=Path, required=True, help="Private authoritative directory outside all worker-writable roots")
         command.add_argument("--worker-writable-root", type=Path, action="append", required=True, help="Declare each worker-writable root; actual runtime denial still needs verification")
@@ -28,6 +34,15 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--qualification-reference", help="Reference to independently observed explicit-human host evidence; never a model assertion")
         elif name == "status":
             command.add_argument("work_id")
+            command.add_argument("--surface", choices=("record", "service", "dashboard"), default="record",
+                                 help="Service and dashboard share one exact read-only source snapshot")
+        elif name in ('archive-preview', 'archive-prepare-local'):
+            command.add_argument('work_id')
+            command.add_argument('--milestone', required=True)
+            if name == 'archive-prepare-local':
+                command.add_argument('--journal', type=Path, required=True)
+                command.add_argument('--intent-id', required=True)
+                command.add_argument('--fake-destination', type=Path, required=True)
         elif name == "prepare-decision":
             command.add_argument("--operation-id", required=True)
             command.add_argument("--work-id", required=True)
@@ -57,9 +72,33 @@ def main(argv: list[str] | None = None) -> int:
             from .runtime import capabilities
             print(json.dumps(capabilities(), indent=2))
             return 0
+        if args.command in ('archive-publish-local', 'archive-read-local'):
+            from .archive import ArchiveJournal, LocalFakeDestination
+            journal = ArchiveJournal(args.journal)
+            result = (journal.read(args.intent_id) if args.command == 'archive-read-local' else
+                      journal.publish_local(args.intent_id, LocalFakeDestination(args.fake_destination)))
+            print(json.dumps(result, indent=2))
+            return 0
+        if args.command in ('archive-preview', 'archive-prepare-local'):
+            from .archive import ArchiveJournal, LocalFakeDestination, preview
+            from .projection import collect
+            store = Store(args.state_dir, tuple(args.worker_writable_root), read_only=True)
+            snapshot = collect(store, args.work_id)
+            result = (preview(snapshot, args.milestone) if args.command == 'archive-preview' else
+                      ArchiveJournal(args.journal).prepare(args.intent_id, snapshot, args.milestone,
+                                                          LocalFakeDestination(args.fake_destination)))
+            print(json.dumps(result, indent=2))
+            return 0
         if args.command == "status":
             store = Store(args.state_dir, tuple(args.worker_writable_root), read_only=True)
-            print(json.dumps(store.read(args.work_id), indent=2))
+            if args.surface == 'record':
+                result = store.read(args.work_id)
+            else:
+                from .projection import collect, dashboard
+                result = collect(store, args.work_id)
+                if args.surface == 'dashboard':
+                    result = dashboard(result)
+            print(json.dumps(result, indent=2))
             return 0
         if args.command == "backup-ledger":
             store = Store(args.state_dir, tuple(args.worker_writable_root), read_only=True)

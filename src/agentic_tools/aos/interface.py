@@ -202,6 +202,12 @@ def create_server(store: Store, *, audience: Literal["host", "worker"] = "host",
     if audience == "worker":
         return server
 
+    @server.tool(annotations=read)
+    def read_service_status(work_id: str) -> dict[str, Any]:
+        """Read the exact source snapshot also used by the dashboard; no dispatch or reconciliation."""
+        from .projection import collect
+        return collect(store, work_id)
+
     @server.tool(annotations=mutate)
     def introduce_work(operation_id: str, work_id: str, title: str,
                        structure: list[str], team: list[TeamMember]) -> dict[str, Any]:
