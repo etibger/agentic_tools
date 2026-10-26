@@ -308,7 +308,7 @@ def test_version_and_status_identify_source_without_changing_work_or_qualifying_
     assert receipt == capabilities()
     assert re.fullmatch(r"sha256:[0-9a-f]{64}", receipt["source_digest"])
     assert receipt["coordinator_accepts_approval_answer"] is False and receipt["mcp_workflow_control"] is False
-    assert "Herdr qualification" in receipt["qualification"]
+    assert "product qualification" in receipt["qualification"]
     assert cli.status()["operator"] == receipt
     assert (cli.state / "aos.sqlite3").read_bytes() == before
 

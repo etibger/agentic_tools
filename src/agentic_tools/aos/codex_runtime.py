@@ -19,7 +19,6 @@ import threading
 import time
 import tomllib
 import uuid
-import xml.etree.ElementTree as ET
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from importlib.metadata import version
@@ -28,6 +27,9 @@ from pathlib import Path
 from codex_cli_bin import bundled_codex_path
 
 from .store import Rejected, canonical, digest, identifier, now
+from .checks import adapter_for, bindings, passed as evidence_passed, validate_normalized
+from agentic_tools.check_adapters import identities as adapter_identities
+from . import budgets
 
 
 PIN = '0.163.0'
@@ -192,7 +194,7 @@ def process_groups() -> dict[int, dict]:
 
 # The trusted session leader waits after the sandbox command exits. Keeping that
 # exact leader alive prevents PGID reuse while ordinary children are discovered
-# and stopped, including children reparented to PID 1 after pytest exits. Its
+# and stopped, including children reparented to PID 1 after the check exits. Its
 # private status/release files are denied to sandboxed commands. A worker death
 # leaves a durable owned guard for explicit restart/cancel reconciliation.
 NATIVE_SUPERVISOR = '''import json,os,subprocess,sys,time
@@ -226,6 +228,7 @@ class CodexRuntime:
             db.execute('CREATE TABLE IF NOT EXISTS attempt (id TEXT PRIMARY KEY, record TEXT NOT NULL)')
             db.execute('CREATE TABLE IF NOT EXISTS observed_process (attempt_id TEXT, pid TEXT, started TEXT, PRIMARY KEY(attempt_id,pid,started))')
             db.execute('CREATE TABLE IF NOT EXISTS native_check (id TEXT PRIMARY KEY, attempt_id TEXT, record TEXT NOT NULL)')
+            budgets.initialize(db)
         self.recipes = recipes
         self.factory = transport_factory
         self.clients = {}
@@ -255,6 +258,20 @@ class CodexRuntime:
         with self._db() as db:
             db.execute('UPDATE attempt SET record=? WHERE id=?', (canonical(record), record['attempt_id']))
 
+    def _package(self, assignment: dict) -> dict:
+        with self.lifecycle.store._connection() as db:
+            row = db.execute('SELECT package,digest FROM concept WHERE work_id=? AND revision=?',
+                             (assignment['work_id'], assignment['concept_revision'])).fetchone()
+        if not row:
+            raise Rejected('runtime_authority', 'Exact approved runtime package is missing')
+        package = json.loads(row['package'])
+        if digest(package) != row['digest'] or row['digest'] != assignment['concept_digest']:
+            raise Rejected('runtime_authority', 'Approved runtime package identity changed')
+        return package
+
+    def _bindings(self, assignment: dict, recipe: dict) -> dict:
+        return bindings(self.lifecycle.store, assignment['work_id'], self._package(assignment), recipe)
+
     def _recipe(self, assignment: dict) -> dict:
         errors = self.lifecycle.assignment_authority_errors(assignment)
         if errors:
@@ -270,11 +287,12 @@ class CodexRuntime:
                     ('work_id', 'kind', 'concept_revision', 'concept_digest', 'contract_revision', 'scope',
                      'executor', 'requested_model', 'requested_effort')):
                 raise Rejected('runtime_identity', 'Only the exact saved sent assignment may launch')
-            package = json.loads(db.execute('SELECT package FROM concept WHERE work_id=? AND revision=?',
-                                           (assignment['work_id'], assignment['concept_revision'])).fetchone()[0])
+        package = self._package(assignment)
         if package['execution_envelope'].get('runtime_recipe_digest') != digest(recipe):
             raise Rejected('runtime_recipe', 'Recipe differs from the exact approved execution envelope')
-        if recipe.get('requires_detached_processes') is not False or not 1 <= recipe.get('max_seconds', 0) <= min(300, contract['max_seconds']):
+        allowance = self._budget(assignment)
+        if (recipe.get('requires_detached_processes') is not False or type(recipe.get('max_seconds')) is not int
+                or not 1 <= recipe['max_seconds'] <= min(allowance['max_job_seconds'], contract['max_seconds'])):
             raise Rejected('runtime_recipe', 'Bounded non-detached recipe required')
         source, outputs = Path(recipe['source']).resolve(), Path(recipe['outputs']).resolve()
         denied = (self.directory.resolve(), Path.home() / '.codex')
@@ -289,6 +307,7 @@ class CodexRuntime:
         if not source.is_dir() or not outputs.is_dir():
             raise Rejected('runtime_scope', 'Coordinator must prepare real isolated source and output directories')
         if (not recipe.get('checks') or not recipe.get('immutable') or not recipe.get('mutable')
+                or len({c['name'] for c in recipe['checks']}) != len(recipe['checks'])
                 or set(c['name'] for c in recipe['checks']) != set(contract['required_checks'] + contract.get('compatibility_checks', []))):
             raise Rejected('runtime_recipe', 'Exact native checks, immutable tests and mutable source allowlist required')
         if set(recipe['immutable']) & set(recipe['mutable']):
@@ -302,35 +321,28 @@ class CodexRuntime:
             self._source_path(recipe, relative)
         for check in recipe['checks']:
             identifier(check['name'])
+            adapter_for(check)
             if (not isinstance(check.get('argv'), list) or not check['argv']
                     or not all(isinstance(part, str) and part for part in check['argv'])
                     or type(check.get('timeout_seconds')) is not int
                     or not 1 <= check['timeout_seconds'] <= recipe['max_seconds'] or not check.get('scope')):
                 raise Rejected('runtime_recipe', 'Bounded exact command, check scope and timeout required')
+        if any('result_kind' in c or 'adapter_id' in c for c in recipe['checks']):
+            interpreter = recipe.get('probe_interpreter')
+            if not isinstance(interpreter, str) or not Path(interpreter).is_absolute() or not Path(interpreter).is_file():
+                raise Rejected('runtime_recipe', 'Typed checks require an explicit existing permission-probe interpreter')
+        self._bindings(assignment, recipe)
         for key in ('implementation_prompt', 'assessment_prompt'):
             if not isinstance(recipe.get(key), str) or not recipe[key].strip():
                 raise Rejected('runtime_recipe', 'Bounded prompts required')
         return recipe
 
     def _budget(self, assignment: dict) -> dict:
-        with self.lifecycle.store._connection() as db:
-            package = json.loads(db.execute('SELECT package FROM concept WHERE work_id=? AND revision=?',
-                                           (assignment['work_id'], assignment['concept_revision'])).fetchone()[0])
-        budget = package['execution_envelope'].get('shared_qualification_budget', {})
-        if (budget.get('budget_id') != 'aos-q2q3-runtime-v1'
-                or budget.get('ledger_directory') != str(self.directory.resolve())
-                or type(budget.get('max_assignments')) is not int or not 1 <= budget['max_assignments'] <= 8
-                or type(budget.get('max_seconds')) is not int or not 1 <= budget['max_seconds'] <= 2400):
-            raise Rejected('runtime_budget', 'Exact shared Q2/Q3 budget and authoritative ledger binding required')
-        return budget
+        return budgets.approved_budget(self._package(assignment)['execution_envelope'], self.directory)
 
-    def budget_receipt(self) -> dict:
+    def budget_receipt(self, budget_id: str = budgets.QUALIFICATION_ID) -> dict:
         with self._db() as db:
-            attempts = [json.loads(row[0]) for row in db.execute('SELECT record FROM attempt')]
-        return {'budget_id': 'aos-q2q3-runtime-v1', 'ledger_directory': str(self.directory.resolve()),
-                'attempts_reserved': len(attempts), 'seconds_reserved': sum(r.get('budget_seconds', 300) for r in attempts),
-                'accounting': 'failed/ambiguous attempts retain one slot and full time reservation; never reset per work or stage',
-                'actual_billing': 'unavailable'}
+            return budgets.receipt(db, self.directory, budget_id)
 
     def _profile(self, recipe: dict, assessment: bool = False) -> tuple[list[str], dict]:
         filesystem = {':root': 'deny', ':minimal': 'read', recipe['source']: 'read' if assessment else 'write',
@@ -470,7 +482,7 @@ raise SystemExit(0 if all(answer.values()) else 1)
         for item in overrides:
             args.extend(['-c', item])
         args.extend(['sandbox', '-P', PROFILE, '--include-managed-config', '-C', recipe['source'],
-                     recipe['checks'][0]['argv'][0], '-c', code, recipe['source'], recipe['outputs'],
+                     recipe.get('probe_interpreter', recipe['checks'][0]['argv'][0]), '-c', code, recipe['source'], recipe['outputs'],
                      str(self.directory.resolve()), str(Path.home() / '.codex'),
                      record['assignment']['kind'], record['attempt_id'],
                      str(self._source_path(recipe, next(iter(recipe['immutable']))))])
@@ -522,15 +534,13 @@ raise SystemExit(0 if all(answer.values()) else 1)
             db.execute('BEGIN IMMEDIATE')
             prior = db.execute('SELECT record FROM attempt WHERE id=?', (aid,)).fetchone()
             if not prior:
-                attempts = [json.loads(row[0]) for row in db.execute('SELECT record FROM attempt')]
-                if (len(attempts) >= budget['max_assignments']
-                        or sum(r.get('budget_seconds', 300) for r in attempts) + recipe['max_seconds'] > budget['max_seconds']):
-                    raise Rejected('runtime_budget', 'Shared Q2/Q3 attempt/time reservation exhausted; no reset or launch')
+                budgets.reserve(db, budget, recipe)
                 record = {'attempt_id': aid, 'assignment': assignment, 'recipe_digest': digest(recipe),
                           'phase': 'intent', 'created_at': now(), 'baseline': inventory(Path(recipe['source'])),
                           'usage_raw': [], 'usage': None, 'observed_processes': {}, 'model_calls_attempted': 0,
                           'budget_id': budget['budget_id'], 'budget_seconds': recipe['max_seconds'],
                           'run_outputs': str(Path(recipe['outputs']) / aid)}
+                record['check_adapters'] = self._bindings(assignment, recipe)
                 if assignment['kind'] == 'assessment' and candidate(Path(recipe['source'])) != json.loads(assignment['candidate']):
                     raise Rejected('source_drift', 'Assessment source differs from its frozen candidate')
                 db.execute('INSERT INTO attempt VALUES(?,?)', (aid, canonical(record)))
@@ -604,6 +614,14 @@ raise SystemExit(0 if all(answer.values()) else 1)
                     (not record.get('model_stop_receipt') or
                      set(result.get('native_checks', [])) != {r['check_id'] for r in rows})):
                 raise Rejected('check_cleanup_unknown', 'Cached assessment lacks current native ownership evidence')
+            if record.get('check_adapters'):
+                recipe = self.recipes[record['assignment']['work_id']]
+                if (digest(recipe) != record['recipe_digest'] or
+                        self._bindings(record['assignment'], recipe) != record['check_adapters']):
+                    raise Rejected('check_adapter', 'Cached result differs from its qualified adapter/recipe identity')
+            for check in result.get('checks', []):
+                if check.get('raw_outputs'):
+                    self._verify_check_receipt(check)
             return record['terminal_observation']
         except Exception as error:
             record['error'] = type(error).__name__ + ': ' + str(error)
@@ -708,6 +726,9 @@ raise SystemExit(0 if all(answer.values()) else 1)
             recipe = self.recipes[record['assignment']['work_id']]
             if digest(recipe) != record['recipe_digest']:
                 raise Rejected('runtime_recipe', 'Saved recipe changed')
+            current_bindings = self._bindings(record['assignment'], recipe)
+            if record.get('check_adapters') is not None and current_bindings != record['check_adapters']:
+                raise Rejected('check_adapter', 'Saved adapter qualification changed')
             if record['phase'] == 'checking':
                 turn, stop = record['terminal_turn'], record['model_stop_receipt']
             else:
@@ -938,12 +959,18 @@ raise SystemExit(0 if all(answer.values()) else 1)
         for parent in [output, *output.parents]:
             if parent.is_symlink():
                 raise Rejected('runtime_output', 'Check output path contains a symlink')
-        xml_path = output / 'junit.xml'
+        adapter = adapter_for(check)
+        identity = adapter_identities()[adapter.ADAPTER_ID]
+        binding = recipe.get('_adapter_bindings', {}).get(adapter.ADAPTER_ID)
+        if binding is not None and any(binding.get(k) != value for k, value in identity.items()):
+            raise Rejected('check_adapter', 'Adapter identity changed before native execution')
+        if binding is None and ('result_kind' in check or 'adapter_id' in check):
+            raise Rejected('check_adapter', 'Typed execution lacks an approved adapter binding')
         overrides, _ = self._profile(recipe, assessment=True)
         args = [str(bundled_codex_path())]
         for item in overrides:
             args.extend(['-c', item])
-        command = check['argv'] + ['-p', 'no:cacheprovider', '--junitxml=' + str(xml_path)]
+        command = adapter.command([part.replace('{output}', recipe['outputs']) for part in check['argv']], output)
         args.extend(['sandbox', '-P', PROFILE, '--include-managed-config', '-C', recipe['source'], *command])
         check_id = 'nc-' + digest([str(output.resolve()), command, frozen])[7:39]
         with self._native_lock:
@@ -952,6 +979,11 @@ raise SystemExit(0 if all(answer.values()) else 1)
                 if attempt and attempt.get("native_cancel_requested"):
                     raise Rejected("check_cancelled", "Native admission was durably cancelled")
             row = self._native_get(check_id)
+            if row and row.get('adapter') != (binding or identity):
+                # A legacy receipt may still be read through its original
+                # untyped interpreter, but never rebadged as a typed adapter.
+                if row.get('adapter') is not None or 'result_kind' in check or 'adapter_id' in check:
+                    raise Rejected('check_adapter', 'Durable check belongs to a different adapter identity')
             if not row:
                 output.mkdir(mode=0o700, parents=True, exist_ok=False)
                 status_dir = self.directory / 'native-status'
@@ -961,7 +993,7 @@ raise SystemExit(0 if all(answer.values()) else 1)
                        'status': str(status_dir / (check_id + '.json')), 'release': str(status_dir / (check_id + '.release')),
                        'before_source': inventory(Path(recipe['source'])),
                        'before_outputs': inventory(Path(recipe['outputs']), allow_empty=True),
-                       'members': {}, 'command': command, 'candidate': frozen, 'created_at': now()}
+                       'members': {}, 'command': command, 'candidate': frozen, 'adapter': binding or identity, 'created_at': now()}
                 with self._db() as db:
                     db.execute('INSERT INTO native_check VALUES(?,?,?)', (check_id, row['attempt_id'], canonical(row)))
                 stdout_path, stderr_path = output / 'stdout.txt', output / 'stderr.txt'
@@ -997,6 +1029,7 @@ raise SystemExit(0 if all(answer.values()) else 1)
             self._fault('native_finished_before_cleanup')
         row = self._native_stop(check_id)
         if row.get('receipt'):
+            self._verify_check_receipt(row['receipt'])
             return row['receipt']
         status_path = Path(row['status'])
         status = json.loads(status_path.read_text()) if status_path.is_file() else {}
@@ -1005,26 +1038,37 @@ raise SystemExit(0 if all(answer.values()) else 1)
         stderr = (output / 'stderr.txt').read_text()
         transcript = output / 'output.txt'
         transcript.write_text(stdout + '\n' + stderr)
-        selected = 0
-        passed = False
-        if xml_path.is_file() and not xml_path.is_symlink():
-            suites = ET.parse(xml_path).getroot()
-            cases = list(suites.iter('testcase'))
-            selected = len(cases)
-            passed = (selected > 0 and not any(list(case) for case in cases) and exit_code == 0)
+        evidence = adapter.interpret(output, stdout, stderr, exit_code)
+        validate_normalized(evidence)
         outcome = ('cancelled' if row.get('cancelled') else 'timeout' if row.get('timed_out') else
-                   'pass' if passed else 'fail' if selected else 'blocked')
+                   'pass' if evidence_passed(evidence, exit_code) else
+                   'fail' if evidence['recognized'] and (evidence['selected'] or evidence['kind'] == 'build') else 'blocked')
         row['cleanup']['outputs_after'] = inventory(Path(recipe['outputs']), allow_empty=True)
         row['cleanup']['output_mutations'] = changed(row['before_outputs'], row['cleanup']['outputs_after'])
         row['cleanup']['observed_at'] = now()
         result = {'name': check['name'], 'command': command, 'environment': 'pinned Codex sandbox; sanitized env; source read-only',
-                'executor': executor, 'selected': selected, 'result': outcome,
+                'executor': executor, **evidence, 'result': outcome, 'adapter': binding or identity,
                 'output': str(transcript), 'output_sha256': hashlib.sha256(transcript.read_bytes()).hexdigest(),
                 'candidate': frozen, 'scope': check['scope'], 'limits': 'isolated fixture only; no billing attribution',
                 'exit_code': exit_code, 'native_check_id': check_id, 'cleanup': row['cleanup']}
+        result['raw_outputs'] = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()
+                                 for path in (output / 'stdout.txt', output / 'stderr.txt')}
+        for filename in evidence.get('artifacts', []):
+            path = Path(filename)
+            if path.is_symlink() or not path.is_file() or not path.resolve().is_relative_to(output.resolve()):
+                raise Rejected('check_evidence', 'Adapter artifact is missing or outside the exact check output scope')
+            result['raw_outputs'][str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
         row['receipt'] = result
         self._native_save(row)
         return result
+
+    @staticmethod
+    def _verify_check_receipt(receipt: dict) -> None:
+        paths = {**receipt.get('raw_outputs', {}), receipt['output']: receipt['output_sha256']}
+        for filename, expected in paths.items():
+            path = Path(filename)
+            if path.is_symlink() or not path.is_file() or hashlib.sha256(path.read_bytes()).hexdigest() != expected:
+                raise Rejected('check_evidence', 'Retained raw check output is missing or changed')
 
     def _result(self, record, recipe, turn, stop):
         source = Path(recipe['source'])
@@ -1046,7 +1090,8 @@ raise SystemExit(0 if all(answer.values()) else 1)
         if assignment['kind'] == 'assessment':
             if frozen != json.loads(assignment['candidate']):
                 raise Rejected('source_drift', 'Assessment changed the frozen candidate')
-            scoped = {**recipe, 'outputs': record['run_outputs'], '_attempt_id': record['attempt_id']}
+            scoped = {**recipe, 'outputs': record['run_outputs'], '_attempt_id': record['attempt_id'],
+                      '_adapter_bindings': self._bindings(assignment, recipe)}
             output = Path(record['run_outputs'])
             checks = [self._check(scoped, check, output / check['name'], assignment['executor'], frozen) for check in recipe['checks']]
             rows = self._native_for_attempt(record['attempt_id'])

@@ -6,7 +6,6 @@ of the authoritative state and decision endpoint.
 """
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -16,6 +15,8 @@ from . import version_receipt
 from .interface import TeamMember
 from .lifecycle import Lifecycle
 from .store import Rejected, Store, digest
+from .checks import source_digest
+from agentic_tools.check_adapters import identities as adapter_identities
 
 
 class ExecutionEnvelope(BaseModel):
@@ -150,13 +151,10 @@ def prepare_decision(store: Store, operation_id: str, work_id: str,
 
 
 def capabilities() -> dict:
-    root = Path(__file__).parent
-    manifest = {path.relative_to(root).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
-                for path in sorted(root.rglob("*.py"))}
-    source_digest = hashlib.sha256(json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     return {**version_receipt(), "coordinator_commands_version": 1,
-            "source_digest": "sha256:" + source_digest,
-            "source_scope": "AOS Python package files; excludes state, configuration, dependencies and documentation",
+            "source_digest": source_digest(), "check_adapters": adapter_identities(),
+            "check_adapter_contract_version": 1,
+            "source_scope": "AOS and reusable check-adapter Python package files; excludes state, configuration, dependencies and documentation",
             "coordinator_commands": ["introduce-work", "present-concept", "register-contract", "prepare-decision", "decide-serve",
                                      "admit", "status", "pause", "resume", "cancel", "worker", "version",
                                      "dashboard-serve", "dashboard-inspect", "dashboard-stop", "reconcile-prerequisites",
@@ -164,4 +162,4 @@ def capabilities() -> dict:
             "dashboard_service_version": 1,
             "workflow_control_transport": "trusted coordinator CLI using Store/Lifecycle/Worker",
             "coordinator_accepts_approval_answer": False, "mcp_workflow_control": False,
-            "qualification": "Command availability is not actual-host, desktop or Herdr qualification"}
+            "qualification": "Command availability is not actual-host, desktop or product qualification"}

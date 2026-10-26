@@ -5,7 +5,7 @@ version replaces an exact candidate hash for qualification.
 """
 from importlib.metadata import PackageNotFoundError, version
 
-__version__ = "0.2.3"
+__version__ = "0.2.4"
 
 
 def version_receipt() -> dict:

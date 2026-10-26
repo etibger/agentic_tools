@@ -12,6 +12,7 @@ from typing import Any
 from datetime import datetime, timezone
 
 from .store import Rejected, Store, canonical, digest, identifier, now
+from .checks import adapter_for, bindings, check_kind, validate_normalized, passed as evidence_passed
 
 
 SCHEMA = """
@@ -338,6 +339,10 @@ class Lifecycle:
         for field in exact:
             if field not in bounds or contract.get(field) != bounds[field]:
                 errors.append('Execution contract differs from approved ' + field)
+        for field in ('runtime_recipe', 'check_kinds', 'check_adapters', 'product_budget', 'adapter_architecture'):
+            if field in bounds or field in contract:
+                if contract.get(field) != bounds.get(field):
+                    errors.append('Execution contract differs from approved ' + field)
         if package.get('authority') != bounds.get('authority'):
             errors.append('Execution authority disagrees with the approved package authority')
         for field in ('max_assignments', 'max_repairs', 'max_seconds'):
@@ -557,8 +562,36 @@ class Lifecycle:
         required = set(contract['required_checks']) | set(contract.get('compatibility_checks', []))
         if len({c.get('name') for c in checks}) != len(checks) or not required.issubset({c.get('name') for c in checks}):
             return 'Required check evidence is missing or duplicated'
+        qualified = None
+        typed = any('result_kind' in c or 'adapter_id' in c for c in contract.get('runtime_recipe', {}).get('checks', []))
+        if contract.get('runtime_recipe'):
+            try:
+                with self.store._connection() as db:
+                    row = db.execute('SELECT package FROM concept WHERE work_id=? AND revision=? AND digest=?',
+                        (a['work_id'], a['concept_revision'], a['concept_digest'])).fetchone()
+                package = json.loads(row[0])
+                if digest(package) != a['concept_digest']:
+                    raise Rejected('check_adapter', 'Approved package changed')
+                qualified = bindings(self.store, a['work_id'], package, package['execution_envelope']['runtime_recipe'])
+            except (Rejected, KeyError, TypeError, ValueError):
+                return 'Required check adapter is not exactly approved or independently qualified'
         for check in checks:
-            if (check.get('result') != 'pass' or type(check.get('selected')) is not int or check['selected'] < 1
+            expected_kind = check_kind(contract, check.get('name'))
+            if check.get('kind') is not None:
+                try:
+                    validate_normalized(check)
+                    valid_result = (check['kind'] == expected_kind and evidence_passed(check, check.get('exit_code'))
+                                    and bool(check.get('adapter')) and bool(check.get('output_sha256'))
+                                    and bool(check.get('raw_outputs')))
+                    if qualified is not None:
+                        descriptor = next((c for c in contract['runtime_recipe']['checks'] if c['name'] == check.get('name')), None)
+                        valid_result = (valid_result and descriptor is not None and
+                                        check.get('adapter') == qualified.get(adapter_for(descriptor).ADAPTER_ID))
+                except Rejected:
+                    valid_result = False
+            else:
+                valid_result = not typed and expected_kind == 'tests' and type(check.get('selected')) is int and check['selected'] > 0
+            if (check.get('result') != 'pass' or not valid_result
                     or not all(check.get(k) for k in ('command', 'environment', 'executor', 'output', 'scope', 'limits'))
                     or check.get('candidate') != result.get('candidate') or check['executor'] != contract['assessor']):
                 return 'A required check failed, was blocked/unrun, selected zero tests, lacked output or had wrong identity'

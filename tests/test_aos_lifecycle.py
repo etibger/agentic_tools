@@ -112,7 +112,7 @@ def test_both_workflows_share_durable_assessment_delivery(tmp_path, workflow):
     readback = Store(store.directory, (tmp_path / 'fixture',), read_only=True).read('Q1')
     assert readback['lifecycle']['source_revision'] == source['source_revision']
     assert readback['execution'] == 'delivered'
-    assert __version__ == '0.2.3'
+    assert __version__ == '0.2.4'
 
 
 def test_approval_and_execution_hold_are_separate_and_fresh_process_readback(tmp_path):
