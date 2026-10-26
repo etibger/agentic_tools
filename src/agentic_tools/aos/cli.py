@@ -17,6 +17,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="aos", description="AOS supervised decisions and explicit bounded workers; real recipes require exact approval and qualification gates")
     parser.add_argument("--version", action="version", version=f"AOS component {__version__}; agentic-tools distribution {version_receipt()['distribution_version'] or 'unavailable'}")
     commands = parser.add_subparsers(dest="command", required=True)
+    commands.add_parser("version", help="Read source identity and supported command capabilities; no state or model access")
     commands.add_parser("runtime-capabilities", help="Inspect pinned SDK/API and runtime version; no model invocation")
     for name in ('archive-publish-local', 'archive-read-local'):
         command = commands.add_parser(name, help='Disposable local archive qualification only; no network publisher')
@@ -24,11 +25,19 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument('--intent-id', required=True)
         if name == 'archive-publish-local':
             command.add_argument('--fake-destination', type=Path, required=True)
-    for name in ("serve", "status", "archive-preview", "archive-prepare-local", "prepare-decision", "decide-serve", "worker", "backup-ledger", "recover-startup-approval"):
+    for name in ("serve", "status", "archive-preview", "archive-prepare-local", "prepare-decision", "decide-serve", "worker", "backup-ledger", "recover-startup-approval",
+                 "introduce-work", "present-concept", "register-contract", "admit", "pause", "resume", "cancel"):
         command = commands.add_parser(name)
         command.add_argument("--state-dir", type=Path, required=True, help="Private authoritative directory outside all worker-writable roots")
         command.add_argument("--worker-writable-root", type=Path, action="append", required=True, help="Declare each worker-writable root; actual runtime denial still needs verification")
-        if name == "serve":
+        if name in ("introduce-work", "present-concept"):
+            command.add_argument("--request", type=Path, required=True, help="Strict JSON request; no approval answer is accepted")
+        elif name in ("register-contract", "admit", "pause", "resume", "cancel"):
+            command.add_argument("--operation-id", required=True, help="Stable ID; retry with identical arguments")
+            command.add_argument("--work-id", required=True)
+            command.add_argument("--expected-work-revision", required=True, type=int)
+            command.add_argument("--digest", required=True, help="Intended exact current concept digest")
+        elif name == "serve":
             command.add_argument("--audience", choices=("host", "worker"), default="host")
             command.add_argument("--qualified-human-host-name", help="Operator configuration only; name is not proof of human identity")
             command.add_argument("--qualification-reference", help="Reference to independently observed explicit-human host evidence; never a model assertion")
@@ -68,6 +77,33 @@ def main(argv: list[str] | None = None) -> int:
                                  help="Operator evidence reference; this label alone is not proof of human action")
     args = parser.parse_args(argv)
     try:
+        if args.command == "version":
+            from .coordinator import capabilities
+            print(json.dumps(capabilities(), indent=2))
+            return 0
+        if args.command in ("introduce-work", "present-concept"):
+            from .coordinator import ConceptRequest, IntroductionRequest, request_file
+            request = request_file(args.request, IntroductionRequest if args.command == "introduce-work" else ConceptRequest)
+            store = Store(args.state_dir, tuple(args.worker_writable_root))
+            result = store.introduce(**request) if args.command == "introduce-work" else store.present(**request)
+            print(json.dumps(result, indent=2))
+            return 0
+        if args.command in ("register-contract", "admit", "pause", "resume", "cancel"):
+            from .coordinator import register_contract
+            from .lifecycle import Lifecycle
+            store = Store(args.state_dir, tuple(args.worker_writable_root))
+            lifecycle = Lifecycle(store)
+            if args.command == "register-contract":
+                result = register_contract(lifecycle, args.operation_id, args.work_id, args.expected_work_revision, args.digest)
+            elif args.command == "admit":
+                result = lifecycle.admit(args.operation_id, args.work_id,
+                                         expected_work_revision=args.expected_work_revision, expected_digest=args.digest)
+            else:
+                result = lifecycle.control(args.operation_id, args.work_id, args.command,
+                                           expected_work_revision=args.expected_work_revision, expected_digest=args.digest)
+            print(json.dumps(result, indent=2))
+            # Held/blocked requests are recorded facts, not successful admission.
+            return 3 if result.get("blockers") or (args.command == "admit" and result.get("execution") != "eligible") else 0
         if args.command == "runtime-capabilities":
             from .runtime import capabilities
             print(json.dumps(capabilities(), indent=2))
@@ -90,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, indent=2))
             return 0
         if args.command == "status":
+            from .coordinator import capabilities
             store = Store(args.state_dir, tuple(args.worker_writable_root), read_only=True)
             if args.surface == 'record':
                 result = store.read(args.work_id)
@@ -98,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
                 result = collect(store, args.work_id)
                 if args.surface == 'dashboard':
                     result = dashboard(result)
+            result["operator"] = capabilities()
             print(json.dumps(result, indent=2))
             return 0
         if args.command == "backup-ledger":
@@ -113,10 +151,9 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(result, indent=2))
             return 0
         if args.command == "prepare-decision":
+            from .coordinator import prepare_decision
             store = Store(args.state_dir, tuple(args.worker_writable_root))
-            capability = store.host_capability("Codex local HTTPS decision tab", "operator-preparation-only")
-            result = store.begin_approval(args.operation_id, args.work_id, args.expected_work_revision,
-                                          args.digest, capability=capability)
+            result = prepare_decision(store, args.operation_id, args.work_id, args.expected_work_revision, args.digest)
             print(json.dumps({"completed": result["completed"], "challenge_id": result.get("challenge_id"),
                               "digest": result.get("digest"), "result": result.get("result")}, indent=2))
             return 0

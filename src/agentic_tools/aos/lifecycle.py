@@ -213,7 +213,27 @@ class Lifecycle:
                    (work_id, code, 'coordinator', dependency, detail, next_action, now()))
         db.execute("UPDATE lifecycle SET execution=CASE WHEN execution IN ('paused','cancelled','delivered') THEN execution ELSE 'held' END WHERE work_id=?", (work_id,))
 
-    def register(self, operation_id: str, work_id: str, contract: dict) -> dict:
+    def _command_guard(self, db: sqlite3.Connection, work_id: str,
+                       expected_work_revision: int | None, expected_digest: str | None) -> None:
+        """Optional coordinator compare-and-set, checked inside the mutation transaction."""
+        if expected_work_revision is None and expected_digest is None:
+            return
+        if expected_work_revision is None or expected_digest is None:
+            raise Rejected('missing_command_identity', 'Expected work revision and exact concept digest are required together')
+        work = self.store._work(db, work_id)
+        self.store._expected(work, expected_work_revision)
+        concept = db.execute('SELECT digest FROM concept WHERE work_id=? AND revision=?',
+                             (work_id, work['current_concept'])).fetchone()
+        if not concept or concept['digest'] != expected_digest:
+            raise Rejected('stale_concept', 'Command must identify the current exact concept digest')
+
+    @staticmethod
+    def _command_payload(payload: list, expected_work_revision: int | None, expected_digest: str | None) -> list:
+        return (payload if expected_work_revision is None and expected_digest is None else
+                [*payload, {'expected_work_revision': expected_work_revision, 'expected_digest': expected_digest}])
+
+    def register(self, operation_id: str, work_id: str, contract: dict, *,
+                 expected_work_revision: int | None = None, expected_digest: str | None = None) -> dict:
         required = ('revision', 'workflow', 'concept_revision', 'concept_digest', 'baseline', 'behavior_delta',
                     'required_checks', 'writer', 'assessor', 'receiving_owner', 'authority', 'resources',
                     'prerequisites', 'qualified_route', 'max_assignments', 'max_repairs', 'max_seconds', 'model', 'effort')
@@ -234,10 +254,11 @@ class Lifecycle:
         if (not isinstance(contract['prerequisites'], dict) or not isinstance(contract['resources'], list)
                 or not all(isinstance(r, str) and r for r in contract['resources'])):
             raise Rejected('invalid_contract', 'Named prerequisites and resources required')
-        payload = ['register', work_id, contract]
+        payload = self._command_payload(['register', work_id, contract], expected_work_revision, expected_digest)
         with self.store._transaction() as db:
             if prior := self.store._prior(db, operation_id, payload):
                 return prior
+            self._command_guard(db, work_id, expected_work_revision, expected_digest)
             self.store._work(db, work_id)
             if db.execute('SELECT 1 FROM lifecycle WHERE work_id=?', (work_id,)).fetchone():
                 raise Rejected('contract_exists', 'Retain the registered contract; revisions need explicit replan')
@@ -329,13 +350,15 @@ class Lifecycle:
                 errors.append('Resource ownership conflict: ' + resource)
         return errors
 
-    def admit(self, operation_id: str, work_id: str) -> dict:
+    def admit(self, operation_id: str, work_id: str, *,
+              expected_work_revision: int | None = None, expected_digest: str | None = None) -> dict:
         # Reconcile before eligibility, including the exact decision in a fresh transaction.
         self.reconcile(work_id)
-        payload = ['admit', work_id]
+        payload = self._command_payload(['admit', work_id], expected_work_revision, expected_digest)
         with self.store._transaction() as db:
             if prior := self.store._prior(db, operation_id, payload):
                 return prior
+            self._command_guard(db, work_id, expected_work_revision, expected_digest)
             run, contract = self._run(db, work_id)
             db.execute("DELETE FROM technical_blocker WHERE work_id=? AND code='admission'", (work_id,))
             errors = self._admission_errors(db, work_id)
@@ -592,15 +615,17 @@ class Lifecycle:
             self._touch(db, work_id, 'reassessment_requested', {'assignment_id': aid})
             return self.store._record(db, operation_id, payload, {'assignment_id': aid})
 
-    def control(self, operation_id: str, work_id: str, action: str) -> dict:
+    def control(self, operation_id: str, work_id: str, action: str, *,
+                expected_work_revision: int | None = None, expected_digest: str | None = None) -> dict:
         if action not in ('pause', 'resume', 'cancel'):
             raise Rejected('invalid_control', 'Use explicit pause, resume or cancel')
         if action == 'resume':
             self.reconcile(work_id)
-        payload = ['control', work_id, action]
+        payload = self._command_payload(['control', work_id, action], expected_work_revision, expected_digest)
         with self.store._transaction() as db:
             if prior := self.store._prior(db, operation_id, payload):
                 return prior
+            self._command_guard(db, work_id, expected_work_revision, expected_digest)
             run, _ = self._run(db, work_id)
             if run['execution'] in ('cancelled', 'delivered'):
                 raise Rejected('terminal_execution', 'Terminal execution cannot be resumed or changed')
@@ -613,7 +638,8 @@ class Lifecycle:
                 errors = self._admission_errors(db, work_id)
                 if errors:
                     self._block(db, work_id, 'resume_held', '; '.join(errors))
-                    return {'execution': 'paused', 'blockers': errors}
+                    self._touch(db, work_id, 'resume_held', errors)
+                    return self.store._record(db, operation_id, payload, {'execution': 'paused', 'blockers': errors})
                 db.execute("UPDATE lifecycle SET execution='eligible',resume_execution=NULL WHERE work_id=?", (work_id,))
             else:
                 db.execute("UPDATE lifecycle SET execution='held',control='cancel_requested' WHERE work_id=?", (work_id,))
