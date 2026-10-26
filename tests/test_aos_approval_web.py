@@ -8,6 +8,7 @@ import re
 import sqlite3
 from threading import Thread
 import time
+import pytest
 from urllib.parse import urlencode
 
 from agentic_tools.aos.approval_web import DecisionController, handler_for
@@ -104,6 +105,40 @@ def test_interrupted_page_session_can_reopen_without_approving(tmp_path):
         assert post(conn, cookie, challenge, csrf, "cancel", origin) == 200
         conn.close()
     assert store.read("WEB-TEST")["decisions"][0]["outcome"] == "cancelled"
+
+
+@pytest.mark.parametrize('choice,outcome', [('approve', 'approved'), ('decline', 'declined'), ('cancel', 'cancelled')])
+@pytest.mark.parametrize('another_pending', [False, True])
+def test_saved_answer_and_replay_return_to_decisions_without_resubmitting(tmp_path, choice, outcome, another_pending):
+    store, current = fixture(tmp_path)
+    with running_page(store) as (port, origin):
+        conn, _, cookie, challenge, csrf = get_form(port)
+        recorded = []
+        for _ in range(2):
+            data = urlencode({'challenge': challenge, 'csrf': csrf, 'choice': choice})
+            conn.request('POST', '/decide', data, {'Content-Type': 'application/x-www-form-urlencoded',
+                         'Cookie': cookie, 'Origin': origin, 'Sec-Fetch-Site': 'same-origin'})
+            response = conn.getresponse()
+            body = response.read().decode()
+            assert response.status == 200 and f'<strong>{outcome}</strong>' in body
+            assert '<a href="/">Back to decisions</a>' in body
+            assert 'target=' not in body and '<form' not in body
+            recorded.append(store.read('WEB-TEST')['decisions'])
+        assert recorded[0] == recorded[1] and len(recorded[1]) == 1
+        if another_pending:
+            store.introduce('second-intro', 'WEB-SECOND', 'Another proposal', ['fixture/'], TEAM)
+            second = store.present('second-concept', 'WEB-SECOND', 1, 'SECOND-DI', 1, 'Second pending proposal',
+                                   ['No work'], TEAM, 'Test only')
+            cap = store.host_capability('preparer', 'SIMULATED:second')
+            store.begin_approval('second-challenge', 'WEB-SECOND', 2, second['digest'], capability=cap)
+        conn.request('GET', '/')
+        response = conn.getresponse()
+        page = response.read().decode()
+        assert response.status == 200
+        assert ('Second pending proposal' if another_pending else 'No active decision form') in page
+        assert store.read('WEB-TEST')['decisions'] == recorded[1]
+        assert recorded[1][0]['digest'] == current['digest']
+        conn.close()
 
 
 def test_old_unchanged_challenge_remains_answerable(tmp_path):

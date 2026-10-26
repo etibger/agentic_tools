@@ -241,7 +241,8 @@ SHA-256: {escape(current['digest'])}</small></p>
             body = document(f"<h1>Decision recorded</h1><section><p>Outcome: <strong>{escape(result['outcome'])}</strong></p>"
                             f"<p>Work: {escape(result['work_id'])} · revision: {result['concept_revision']}</p>"
                             f"<p>Digest: {escape(result['digest'])}</p><p>Decision ID: {escape(result['decision_id'])}</p>"
-                            "<p>Implementation dispatch is still gated by the remaining AOS qualifications.</p></section>")
+                            "<p>Implementation dispatch is still gated by the remaining AOS qualifications.</p></section>"
+                            '<p><a href="/">Back to decisions</a></p>')
             self.response(HTTPStatus.OK, body, cookie="aos_decision=; Max-Age=0; HttpOnly; Secure; SameSite=Strict; Path=/")
 
         def log_message(self, format: str, *args: object) -> None:
