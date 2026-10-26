@@ -19,9 +19,9 @@ The link opens the live GitHub-hosted HTML guide from any device. Both the guide
 3. Show the project structure and proposed team/model settings, prepare a proportionate DI, and obtain Concept Approval before implementation. Confirm the actual team, then execute useful increments within the approved authority using native project commands.
 4. Accept the agreed user outcome with actual evidence, limits and receiving ownership. The coordinator consumes every completion and dispatches the next ready authorized assignment.
 
-The new entry points are pilot manual contracts. External publication, dashboards, recurring monitoring and separate narrative roles are explicit choices. The current gate checker supports the extended feature record only; profile-aware validation and automatic dispatch are not implemented. Copying a template does not start agents or services.
+The new entry points are pilot manual contracts. External publication, dashboards, recurring monitoring and separate narrative roles are explicit choices. The current gate checker supports the extended feature record only; automatic execution of arbitrary toolbox contracts is not implemented. The separately bounded AOS runner implements approved bug/feature handoffs. Copying a template does not start agents or services.
 
-The approved [AOS investigation and Concept Approval package](docs/aos-concept.md) defines one shared local service and a bug-fix runner first. The [M0 prototype](docs/aos-concept.md#m0-prototype-and-qualification-result) implements durable records and a local tool interface. Chat record access, bounded runtime interruption/command cleanup, and a supervised human decision in the Codex HTTPS side tab have been qualified. Autonomous project execution is not enabled; the approved feature-pilot amendment requires disposable workflow and recovery evidence before Herdr admission.
+The approved [AOS package](docs/aos-concept.md) has bounded local Q2 acceptance for sequential real bug-fix and feature workflows. The maintained [coordinator CLI](docs/aos-operator.md), packaged read-only dashboard and connected status/recovery/local-history changes are locally committed (T1–T3). The current readiness candidate is author-tested and awaits independent assessment, actual desktop qualification and adoption; Herdr execution remains held. MCP workflow controls, automatic chat wake-up and general installation/update remain unavailable or deferred. [Reproduction and qualification boundaries](docs/aos-validation.md) distinguish public regression checks from actual-host obligations.
 
 ## Extended multi-agent feature recipe
 
@@ -48,8 +48,9 @@ Generated HTML lives in site/ and stays outside Git. The build copies canonical 
 | templates/ | Shared contract, three toolbox kickoffs, extended feature recipe and supporting evidence templates |
 | docs/ | Toolbox specification, worked examples, extended guide, communication figure and synthetic dashboard |
 | scripts/ | Documentation build hook, gate-record, dashboard and publication checks |
-| .github/workflows/ | Strict documentation build and main-branch Pages publication |
-| uv.lock | Reproducible documentation dependencies |
+| src/agentic_tools/aos/ and tests/ | Bounded local AOS implementation and synthetic/native regression checks |
+| .github/workflows/ | Ubuntu documentation checks/Pages publication and macOS AOS regressions |
+| uv.lock | Locked documentation, AOS runtime and development dependencies |
 
 ## Publication boundaries
 
@@ -57,4 +58,4 @@ This kit contains generic workflow guidance, reviewed diagrams, synthetic dashbo
 
 Before sharing new content, review its provenance and audience. Keep other company references in an approved company system unless their publication is explicitly authorized. The publication check catches known archive paths, internal-service links and common credential formats, but does not replace a content review.
 
-No product source or private implementation archive is included.
+The public AOS implementation and synthetic fixtures are included. Private project source, conversations, credentials and implementation evidence archives are excluded.

@@ -261,6 +261,8 @@ To exercise cancellation instead, issue `cancel` with a fresh operation ID and t
 
 ## Maintainer checks
 
+The [reproduction and qualification guide](aos-validation.md) lists the complete fresh-export commands, retained regression inventory and actual-host obligations for independent assessment.
+
 ```sh
 uv run pytest tests/test_aos_coordinator_cli.py
 uv run pytest tests/test_aos_recovery_controls.py tests/test_aos_archive.py tests/test_aos_projection.py tests/test_aos_dashboard_service.py

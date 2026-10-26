@@ -12,7 +12,7 @@ Repair a defect, change an existing product or discover a new one. Use a shared 
 
 The toolbox builds on an existing multi-agent feature practice and its retrospectives. The three new entry points are pilot contracts; they do not introduce an autonomous orchestration service. Start with the [shared work contract](downloads/work-contract.txt) plus one kickoff.
 
-The approved [AOS investigation and Concept Approval package](aos-concept.md) defines a shared local core and bug-fix runner operated through ChatGPT macOS. The [M0 prototype](aos-concept.md#m0-prototype-and-qualification-result) is implemented. Chat record access and bounded runtime interruption/command cleanup are demonstrated; human confirmation remains unqualified. New projects show their structure/team before investigation and require explicit Concept Approval before implementation.
+The approved [AOS package](aos-concept.md) has bounded local Q2 acceptance for sequential real bug-fix and feature workflows, including the supervised HTTPS human-decision route. T1–T3 add a locally committed [coordinator CLI](aos-operator.md), packaged read-only dashboard and connected status/recovery/local history. The current readiness candidate is author-tested; independent assessment, the actual desktop journey, adoption and Herdr admission remain held. Automatic chat wake-up and general installation/update are deferred. See [reproduction and qualification](aos-validation.md). New projects still show their structure/team and require exact Concept Approval before implementation.
 
 ## Select the purpose and assurance
 
@@ -56,5 +56,5 @@ Agent activity is not delivered progress. Test count is not requirement coverage
 
 The [lessons](lessons.md) explain what the completed implementation and retrospective added. Templates use configurable roles and native project commands rather than project-specific defaults. [Publication boundaries](reference.md) describe the explicitly approved PDF reference and how other company-source material stays outside the kit.
 
-!!! note "A workflow kit, not a service"
-    These files do not launch agents, monitor a session or enforce the truth of reports by themselves. The current checker covers the extended gate format only. The coordinator and available runtime tools carry out the contracts.
+!!! note "Templates require an operator"
+    Copying workflow templates does not launch agents, monitor a session or enforce the truth of reports. The current gate checker covers the extended format only. The separately bounded AOS commands require explicit configuration and authority; their local implementation does not adopt an existing project.

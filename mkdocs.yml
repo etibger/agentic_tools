@@ -53,6 +53,7 @@ nav:
   - Toolbox specification: toolbox.md
   - AOS concept and approval: aos-concept.md
   - AOS coordinator commands: aos-operator.md
+  - AOS reproduction and qualification: aos-validation.md
   - Worked examples: worked-examples.md
   - Extended feature workflow:
       - Quick start: extended-feature-start.md
