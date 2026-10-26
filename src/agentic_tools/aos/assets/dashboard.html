@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Project dashboard</title>
+<style>
+*{box-sizing:border-box}body{margin:0;padding:clamp(12px,2vw,30px);background:#0f171f;color:#e0e7ee;font:16px/1.5 system-ui,sans-serif}main{max-width:2400px;margin:auto}h1{font-size:28px}h2{font-size:20px;margin:0 0 8px}p{margin:6px 0}.muted,small{color:#a4b4c3}section{background:#192530;border:1px solid #344655;border-radius:12px;padding:18px;margin:14px 0}a{color:#91caff;overflow-wrap:anywhere}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:10px}.card{border:1px solid #3c5162;padding:12px;border-radius:8px;min-width:0;overflow-wrap:anywhere}.card strong,.card small{display:block}.accepted{border-color:#81d4b5}.active{border-color:#efbd64}.pending-decision{border-left:4px solid #efbd64}#health{padding:10px;border:1px solid #81d4b5;overflow-wrap:anywhere}#health.error{border-color:#ff8a8a;color:#ffbaba}#chart{width:100%;height:auto;aspect-ratio:980/360;display:block;max-height:460px}#approvals h2{color:#efbd64}#count{font-size:24px;font-weight:700}ul{padding-left:22px}details{margin-top:12px}pre{white-space:pre-wrap;overflow-wrap:anywhere}#stage{font-size:24px}button{font:inherit;padding:6px 10px}button:focus-visible,a:focus-visible{outline:2px solid #efbd64}
+#approval-count.clear{color:#81d4b5}#approval-count.pending{color:#efbd64}
+.phase-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:12px 0}.phase-toolbar output{min-width:54px;text-align:center}.phase-toolbar button,.phase-close{background:#192530;color:#e0e7ee;border:1px solid #527087;border-radius:6px;cursor:pointer}.phase-wrap{position:relative}.phase-scroll{overflow:auto;max-width:100%;max-height:540px;min-height:230px;border:1px solid #344655;border-radius:10px;background:#111d26;overscroll-behavior:contain;cursor:grab}.phase-scroll:active{cursor:grabbing}.phase-scroll:focus-visible{outline:3px solid #efbd64}.phase-spacer{position:relative}.phase-canvas{position:relative;transform-origin:0 0;isolation:isolate}.phase-edges{position:absolute;inset:0;z-index:-1;pointer-events:none}.phase-lane{position:absolute;color:#a4b4c3;font-size:13px;margin:0}.phase-node{position:absolute;background:#192530;color:#e0e7ee;border:1px solid #527087;border-radius:8px;padding:10px 12px;text-align:left;font-size:16px;line-height:1.25;cursor:pointer;display:flex;flex-direction:column;justify-content:center;gap:6px}.phase-node small{font-size:12px}.phase-node.accepted{border-left:5px solid #81d4b5}.phase-node.active{border-left:5px solid #efbd64}.phase-node.ready,.phase-node.review{border-left:5px solid #91caff}.phase-node.held,.phase-node.failed,.phase-node.changes_requested{border-left:5px solid #ff8a8a}.phase-node[aria-expanded=true]{outline:2px solid #91caff;outline-offset:2px}.phase-panel{position:absolute;z-index:4;width:min(370px,calc(100% - 16px));max-height:410px;overflow:auto;padding:18px;background:#223544;border:1px solid #91caff;border-radius:10px;box-shadow:0 10px 30px #0009}.phase-panel[hidden]{display:none}.phase-panel h3{margin:0 30px 10px 0;font-size:18px}.phase-panel p,.phase-panel li{font-size:14px}.phase-close{position:absolute;right:8px;top:8px}.phase-legend{display:flex;flex-wrap:wrap;gap:8px 18px;font-size:13px;margin:12px 0}.phase-facts{border-left:3px solid #91caff;padding:8px 12px;margin:12px 0;background:#111d26}.phase-data-health{font-size:14px;color:#a4b4c3}@media(max-width:600px){.phase-scroll{max-height:440px}.phase-panel{max-height:340px}}
+.phase-node.decision{background:transparent;border:0;padding:0;text-align:center;align-items:center}.phase-node.decision>svg{position:absolute;inset:0;width:100%;height:100%;color:#91caff}.phase-node.decision.accepted>svg{color:#81d4b5}.phase-node.decision.held>svg{color:#ff8a8a}.phase-node.decision>span,.phase-node.decision>small{position:relative;z-index:1;max-width:140px}.phase-mode button[aria-pressed=true]{border-color:#91caff;background:#223544}
+</style></head><body><main>
+<h1 id="project">Project dashboard</h1><p class="muted">Recorded project status · display refreshes every 2 seconds · source updates are recorded separately</p><p id="health" role="status">Loading workflow-state.json…</p>
+<section id="approvals"><h2>Needs your attention</h2><p id="approval-count" role="status" style="font-size:26px;font-weight:700"></p><p id="attention-note"></p><div id="decisions" class="grid"></div><details><summary>Already answered</summary><div id="answered"></div></details><p class="muted">This view records decisions and does not submit approvals. Each pending card says where to respond.</p></section>
+<section><h2>Current stage</h2><strong id="stage">Awaiting state</strong><p id="stage-status"></p><p id="next"></p><p id="candidate" class="muted"></p><div id="tasks" class="grid"></div></section>
+<section id="phase-map" aria-labelledby="phase-heading" onkeydown="if(event.key==='Escape'){closePhaseDetail(true);event.stopPropagation()}if(event.key==='Tab')phaseUI.suppressPreview=false">
+<p class="muted">Current phase · detailed dependencies</p><h2 id="phase-heading">Inside the current phase</h2><p id="phase-summary">No detailed dependency record supplied yet.</p><div id="phase-content" hidden>
+<div id="phase-mode" class="phase-toolbar phase-mode" hidden role="group" aria-label="Phase diagram view"><button id="phase-mode-flow" type="button" onclick="setPhaseMode('flow')">Current work</button><button id="phase-mode-progress" type="button" onclick="setPhaseMode('progress')">Attempt history</button></div><p id="phase-next" class="phase-facts"></p><p id="phase-freshness" class="phase-data-health"></p>
+<p class="muted">Follow the arrows. Hover or focus to preview; click or press Enter to keep details open. Escape closes them. Drag the background or scroll to pan. Zoom, pan and selection stay in place during refresh.</p>
+<div class="phase-toolbar" role="group" aria-label="Current phase graph controls"><button id="phase-minus" type="button" aria-label="Zoom out dependency graph" onclick="scalePhase(phaseUI.scale-0.15)">−</button><output id="phase-zoom" aria-live="polite">100%</output><button id="phase-plus" type="button" aria-label="Zoom in dependency graph" onclick="scalePhase(phaseUI.scale+0.15)">+</button><button type="button" onclick="fitPhase()">Fit</button><button type="button" onclick="resetPhase()">Reset</button></div>
+<div class="phase-wrap"><div id="phase-scroll" class="phase-scroll" tabindex="0" role="region" aria-label="Current phase dependency graph, scroll or drag to pan" onscroll="positionPhasePanel();savePhaseView()" onpointerdown="startPhasePan(event)" onpointermove="movePhasePan(event)" onpointerup="endPhasePan(event)" onpointercancel="endPhasePan(event)"><div id="phase-spacer" class="phase-spacer"><div id="phase-canvas" class="phase-canvas"></div></div></div><aside id="phase-panel" class="phase-panel" role="region" aria-labelledby="phase-detail-heading" hidden onmouseleave="if(!phaseUI.pinned)closePhaseDetail()"></aside></div>
+<div class="phase-legend"><span>Accepted · evidence for this step accepted</span><span>Active · work observed underway</span><span>Ready · can start when assigned</span><span>Under review · result produced, acceptance pending</span><span>Needs correction · review found a defect</span><span>Waiting · named prerequisite missing</span><span>Held / failed · technical issue needs resolution</span><span>Pending · not started</span></div>
+<p class="muted">Solid arrow: prerequisite accepted. Blue dotted arrow: on completion, send to independent review (not a live status). Amber dashed arrow: failure or bounded correction route; read its label. An arrow never grants approval or extra attempts.</p><p id="phase-edge-note" class="muted"></p><p class="muted">A completed step does not accept the whole phase. This map displays recorded dependencies; it does not schedule work or approve it.</p><details id="phase-text-details"><summary>Accessible dependency list</summary><ol id="phase-text-map"></ol></details></div></section>
+<section id="forecast" hidden><h2>Forecast and actual time</h2><p id="forecast-summary"></p><p id="forecast-clock" class="muted"></p><div style="overflow-x:auto"><table style="width:100%;text-align:left;border-spacing:12px"><thead><tr><th>Internal step</th><th>Original estimate</th><th>Actual active</th><th>Approval wait</th><th>Technical wait</th><th>Variance / observation</th></tr></thead><tbody id="forecast-steps"></tbody></table></div><div id="forecast-added" hidden><h3>Work added after the forecast</h3><p>These items were outside the original estimate. Durations cover only the stated intervals; they do not account for all elapsed time.</p><ul id="forecast-added-items"></ul></div><p id="forecast-accounting" class="muted"></p><details><summary>Earlier steps and forecasting assumptions</summary><ul id="forecast-earlier"></ul><ul id="forecast-assumptions"></ul></details><p id="forecast-tracking" class="muted"></p></section>
+<section><h2>Technical blockers</h2><div id="blockers" class="grid"></div></section>
+<section><h2>Usage and cost</h2><div class="grid"><div class="card"><small>Recorded tokens</small><strong id="usage-total">Unavailable</strong><p id="usage-breakdown"></p></div><div class="card"><small>Estimated API-equivalent cost</small><strong id="usage-estimate">Unpriced</strong><p id="usage-assumptions"></p></div><div class="card"><small>Actual billed amount</small><strong id="usage-billed">Unavailable</strong></div></div><p id="usage-coverage" class="muted"></p><p id="usage-source" class="muted"></p></section>
+<section><h2>Handoff safeguard</h2><p>Freeze → independent initial reports → cross-role exchange → findings resolved/rechecked → gate accepted → next owner acknowledges</p><p id="watchdog"></p></section>
+<section><h2>Agents now</h2><div id="agents" class="grid"></div></section>
+<section><h2>Approved task burndown</h2><p id="count"></p><p id="clock" class="muted"></p><svg id="chart" viewBox="0 0 980 360" role="img" aria-labelledby="chart-title chart-desc"><title id="chart-title">Approved tasks remaining over elapsed wall-clock time</title><desc id="chart-desc"></desc><g id="plot"></g></svg><p id="checklist"></p><p class="muted">Accepted gates, not effort. Scope changes/reopened gates must have timestamped history entries. Completion freezes the task clock.</p></section>
+<section><h2>Investigation and lessons learned</h2><div id="outputs"></div></section>
+<section><h2>Findings and validation</h2><ul id="evidence"></ul></section>
+<section id="glossary"><h2>Terms and abbreviations</h2><p class="muted">A quick reference for the language used on this dashboard.</p><dl id="terms"></dl></section>
+</main><script>
+const el=id=>document.getElementById(id);
+const escapeHTML=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function safeLink(url,label){try{const u=new URL(url);if(!['http:','https:'].includes(u.protocol))throw Error('scheme');return '<a href="'+escapeHTML(u.href)+'" target="_blank" rel="noopener noreferrer">'+escapeHTML(label)+'</a>';}catch{return escapeHTML(label);}}
+const time=value=>value?new Date(value).toLocaleString():'Unavailable';
+const commonTerms=[
+ ['DI — Detailed Investigation','The proposal explaining the problem, intended change, options and acceptance criteria before implementation.'],
+ ['Milestone / gate','A checkpoint with required evidence. Passing tests is part of that evidence; the responsible reviewer must accept the result.'],
+ ['Dependency','Something that must finish or be available before another task can start.'],
+ ['Candidate / frozen candidate','The specific version being checked. Frozen means its files stay unchanged during assessment.'],
+ ['Independent assessment','A different agent checks the work and its evidence; the author cannot approve their own result.'],
+ ['Qualification','Demonstrating that a tool or workflow works under the stated conditions. A simulated test does not prove the real application works.'],
+ ['Handoff','Passing a completed result to the next responsible agent or task.'],
+ ['Execution held','Work cannot proceed because a prerequisite is missing. An existing concept approval remains valid.'],
+ ['Reconciliation','Comparing saved records with what actually happened, then resolving differences before continuing.'],
+ ['Burndown','The number of approved gates still unfinished over elapsed time. It is not effort spent or a forecast of the finishing date.'],
+ ['Tokens / cached input','Units of text processed by the model. Cached input is reused input and is a subset, not an extra amount to add.'],
+ ['API-equivalent cost','An estimate using stated API prices. It is not your subscription charge or actual bill.'],
+ ['Coverage / unavailable / unpriced','Coverage says which work is measured. Unavailable means missing data; unpriced means no supported cost estimate. Neither means zero.'],
+ ['Watchdog / heartbeat','A periodic check for stalled or missed work. Refreshing this page does not create or run one.'],
+ ['Source time / fetch time','When the underlying status was recorded / when this browser retrieved it. A fresh fetch can contain old information.']
+];
+const phaseViews=new Map();
+let phaseMode='flow';
+function setPhaseMode(mode){phaseMode=mode;if(lastGood)renderPhase(lastGood);}
+let phaseUI={model:null,scale:1,pinned:null,preview:null,suppressPreview:false,width:0,height:0,drag:null};
+const phaseStatus=s=>({accepted:'Accepted',active:'Active',ready:'Ready',review:'Under review',changes_requested:'Needs correction',waiting:'Waiting',held:'Held',failed:'Failed',pending:'Pending'}[s]);
+const phaseCondition=(n,dep)=>n.dependency_conditions?.[dep]||'accepted';
+const phaseConditionLabel=c=>({accepted:'accepted',completed:'on completion: independent review',failed:'failed review triggers authorized correction'}[c]);
+const phaseTransition=(n,dep)=>n.dependency_labels?.[dep]||phaseConditionLabel(phaseCondition(n,dep));
+function validatePhase(m){
+ if(!m)return;
+ if(!m.id||!m.title||!m.summary||!m.next_action||!m.source_revision||!Number.isFinite(Date.parse(m.observed_at))||!Array.isArray(m.nodes)||!m.nodes.length||m.nodes.length>100)throw Error('Invalid current-phase dependency record');
+ if(m.lanes&&(!Array.isArray(m.lanes)||m.lanes.some(l=>!l.title||!Number.isInteger(l.row)||l.row<0||l.row>30)))throw Error('Invalid dependency lane');
+ const ids=new Set(m.nodes.map(n=>n.id)),cells=new Set(),lookup=new Map(m.nodes.map(n=>[n.id,n]));
+ if(ids.size!==m.nodes.length)throw Error('Duplicate dependency step');
+ for(const n of m.nodes){
+  if((n.kind&&!['action','decision'].includes(n.kind))||!/^[a-z][a-z0-9-]*$/.test(n.id)||!n.title||!phaseStatus(n.status)||!n.owner||!n.summary||!n.wait_reason||!Number.isFinite(Date.parse(n.observed_at))||!Array.isArray(n.depends_on)||n.depends_on.some(d=>!ids.has(d))||!Number.isInteger(n.column)||!Number.isInteger(n.row)||n.column<0||n.row<0||n.column>30||n.row>30)throw Error('Invalid dependency step or reference');
+  if(n.dependency_conditions&&(typeof n.dependency_conditions!=='object'||Array.isArray(n.dependency_conditions)||Object.entries(n.dependency_conditions).some(([id,condition])=>!n.depends_on.includes(id)||!phaseConditionLabel(condition))))throw Error('Invalid dependency condition');
+  if(n.dependency_labels&&(typeof n.dependency_labels!=='object'||Array.isArray(n.dependency_labels)||Object.entries(n.dependency_labels).some(([id,label])=>!n.depends_on.includes(id)||typeof label!=='string'||!label.trim()||label.length>80)))throw Error('Invalid dependency label');
+  const cell=n.column+':'+n.row;if(cells.has(cell))throw Error('Overlapping dependency steps');cells.add(cell);
+ }
+ if(m.repair_loops&&(!Array.isArray(m.repair_loops)||m.repair_loops.some(l=>!ids.has(l.from)||!ids.has(l.to)||!l.label||!Number.isInteger(l.limit)||l.limit<1||!Number.isInteger(l.used)||l.used<0||l.used>l.limit)))throw Error('Invalid bounded repair loop');
+ const seen=new Set(),visiting=new Set();
+ function visit(id){if(visiting.has(id))throw Error('Dependency cycle');if(seen.has(id))return;visiting.add(id);lookup.get(id).depends_on.forEach(visit);visiting.delete(id);seen.add(id);}
+ m.nodes.forEach(n=>visit(n.id));
+ if(m.nodes.some(n=>n.depends_on.some(d=>{const p=lookup.get(d);return p.column>n.column||(p.column===n.column&&p.row>=n.row);})))throw Error('Dependency layout must run left to right or downward');
+}
+function phaseDisplayDependencies(m){
+ const lookup=new Map(m.nodes.map(n=>[n.id,n])),cache=new Map();
+ function ancestors(id){if(cache.has(id))return cache.get(id);const result=new Set();for(const dep of lookup.get(id).depends_on){result.add(dep);for(const earlier of ancestors(dep))result.add(earlier);}cache.set(id,result);return result;}
+ return new Map(m.nodes.map(n=>[n.id,n.depends_on.filter(dep=>!n.depends_on.some(other=>other!==dep&&ancestors(other).has(dep)))]));
+}
+function phaseBody(n){
+ const lookup=new Map(phaseUI.model.nodes.map(x=>[x.id,x.title]));
+ return '<p><strong>Status:</strong> '+phaseStatus(n.status)+' · <strong>Owner:</strong> '+escapeHTML(n.owner)+'</p><p>'+escapeHTML(n.summary)+'</p><p><strong>All required checks:</strong> '+escapeHTML(n.depends_on.map(id=>lookup.get(id)+' — '+phaseTransition(n,id)).join('; ')||'No earlier step')+'</p><p><strong>Wait / next action:</strong> '+escapeHTML(n.wait_reason)+'</p><p class="muted">Observed '+escapeHTML(time(n.observed_at))+'</p>'+(n.evidence?.length?'<ul>'+n.evidence.map(e=>'<li>'+safeLink(e.url,e.label)+'</li>').join(''):'<p class="muted">No linked evidence supplied for this step.</p>');
+}
+function savePhaseView(){if(!phaseUI.key)return;const s=el('phase-scroll');phaseUI.left=s.scrollLeft;phaseUI.top=s.scrollTop;try{sessionStorage.setItem('aos-phase-ui-v1:'+phaseUI.key,JSON.stringify({scale:phaseUI.scale,left:phaseUI.left,top:phaseUI.top,pinned:phaseUI.pinned}));}catch{/* UI persistence is optional; state remains in memory. */}}
+function savedPhaseView(key){try{const v=JSON.parse(sessionStorage.getItem('aos-phase-ui-v1:'+key));if(v&&[v.scale,v.left,v.top].every(Number.isFinite)&&v.scale>=.25&&v.scale<=2&&v.left>=0&&v.top>=0&&(v.pinned===null||typeof v.pinned==='string'))return v;}catch{}return null;}
+function positionPhasePanel(){
+ const panel=el('phase-panel'),n=phaseUI.model?.nodes.find(x=>x.id===(phaseUI.pinned||phaseUI.preview));if(!n||panel.hidden)return;
+ const scroll=el('phase-scroll'),width=scroll.clientWidth||800,height=scroll.clientHeight||400,pw=Math.min(370,width-16),ph=Math.min(panel.offsetHeight||350,height-16);
+ const x=(24+n.column*275)*phaseUI.scale-scroll.scrollLeft,y=(40+n.row*170)*phaseUI.scale-scroll.scrollTop;
+ let left=x+220*phaseUI.scale+12;if(left+pw>width-8)left=x-pw-12;
+ panel.style.left=Math.max(8,Math.min(width-pw-8,left))+'px';panel.style.top=Math.max(8,Math.min(height-ph-8,y))+'px';panel.style.maxHeight=Math.max(160,Math.min(410,height-16))+'px';
+}
+function renderPhasePanel(){
+ const id=phaseUI.pinned||phaseUI.preview,n=phaseUI.model?.nodes.find(x=>x.id===id),panel=el('phase-panel');
+ for(const step of phaseUI.model?.nodes||[])el('phase-node-'+step.id)?.setAttribute('aria-expanded',String(step.id===id));
+ if(!n){panel.hidden=true;return;}
+ const html='<button type="button" class="phase-close" aria-label="Close step details" onclick="closePhaseDetail(true)">×</button><h3 id="phase-detail-heading">'+escapeHTML(n.title)+'</h3><p class="muted">'+(phaseUI.pinned?'Selected step · Escape or × to close':'Preview · click the step to keep open')+'</p>'+phaseBody(n);
+ if(panel.innerHTML!==html){const top=panel.scrollTop;panel.innerHTML=html;panel.scrollTop=top;}
+ panel.hidden=false;positionPhasePanel();
+}
+function showPhaseDetail(id,pin=false){
+ if(!phaseUI.model?.nodes.some(n=>n.id===id)||(!pin&&phaseUI.suppressPreview))return;
+ if(pin){phaseUI.suppressPreview=false;phaseUI.pinned=phaseUI.pinned===id?null:id;phaseUI.preview=null;}
+ else if(!phaseUI.pinned)phaseUI.preview=id;
+ renderPhasePanel();savePhaseView();
+}
+function leavePhaseDetail(id,event){if(phaseUI.pinned||event?.relatedTarget?.closest?.('#phase-panel'))return;if(phaseUI.preview===id){phaseUI.preview=null;renderPhasePanel();}}
+function closePhaseDetail(returnFocus=false){const id=phaseUI.pinned||phaseUI.preview;phaseUI.pinned=null;phaseUI.preview=null;phaseUI.suppressPreview=true;renderPhasePanel();savePhaseView();if(returnFocus&&id)el('phase-node-'+id)?.focus?.({preventScroll:true});}
+function scalePhase(scale,preserveCenter=true){
+ const scroll=el('phase-scroll'),old=phaseUI.scale,cx=(scroll.scrollLeft+scroll.clientWidth/2)/old,cy=(scroll.scrollTop+scroll.clientHeight/2)/old;
+ phaseUI.scale=Math.max(.25,Math.min(2,scale));el('phase-canvas').style.transform='scale('+phaseUI.scale+')';el('phase-spacer').style.width=phaseUI.width*phaseUI.scale+'px';el('phase-spacer').style.height=phaseUI.height*phaseUI.scale+'px';
+ el('phase-zoom').textContent=Math.round(phaseUI.scale*100)+'%';el('phase-minus').disabled=phaseUI.scale<=.25;el('phase-plus').disabled=phaseUI.scale>=2;
+ if(preserveCenter){scroll.scrollLeft=Math.max(0,cx*phaseUI.scale-scroll.clientWidth/2);scroll.scrollTop=Math.max(0,cy*phaseUI.scale-scroll.clientHeight/2);}positionPhasePanel();if(!phaseUI.restore)savePhaseView();
+}
+function fitPhase(){scalePhase(Math.min(1,(el('phase-scroll').clientWidth-18)/phaseUI.width),false);el('phase-scroll').scrollLeft=0;el('phase-scroll').scrollTop=0;positionPhasePanel();}
+function resetPhase(){scalePhase(1,false);el('phase-scroll').scrollLeft=0;el('phase-scroll').scrollTop=0;positionPhasePanel();}
+function startPhasePan(event){if(event.button!==0||event.target.closest('button,a'))return;const s=el('phase-scroll');phaseUI.drag={id:event.pointerId,x:event.clientX,y:event.clientY,left:s.scrollLeft,top:s.scrollTop};s.setPointerCapture(event.pointerId);}
+function movePhasePan(event){const d=phaseUI.drag;if(!d||d.id!==event.pointerId)return;const s=el('phase-scroll');s.scrollLeft=d.left+d.x-event.clientX;s.scrollTop=d.top+d.y-event.clientY;positionPhasePanel();}
+function endPhasePan(event){if(phaseUI.drag?.id===event.pointerId){phaseUI.drag=null;el('phase-scroll').releasePointerCapture(event.pointerId);}}
+function renderPhase(s){
+ el('phase-mode').hidden=!s.phase_flow;const flow=!!s.phase_flow&&phaseMode==='flow';el('phase-mode-flow').setAttribute('aria-pressed',String(flow));el('phase-mode-progress').setAttribute('aria-pressed',String(!flow));
+ const m=flow?s.phase_flow:s.phase_graph;el('phase-content').hidden=!m;
+ if(!m){el('phase-heading').textContent='Inside the current phase';el('phase-summary').textContent='No detailed dependency record supplied yet. The overview above is the only recorded task map.';return;}
+ const key=s.project+'|'+m.id,scroll=el('phase-scroll');
+ if(phaseUI.key!==key){if(phaseUI.key){savePhaseView();phaseViews.set(phaseUI.key,phaseUI);}const saved=savedPhaseView(key);phaseUI=phaseViews.get(key)||{key,model:null,scale:1,pinned:null,preview:null,suppressPreview:false,initialized:!!saved,left:0,top:0,...(saved||{})};phaseUI.restore=true;phaseUI.markup=null;}
+ phaseUI.model=m;phaseUI.width=48+(Math.max(...m.nodes.map(n=>n.column))+1)*275-55+(m.repair_loops?.length?32:0);phaseUI.height=64+(Math.max(...m.nodes.map(n=>n.row))+1)*170-80+(m.repair_loops?.length?80:0);
+ if(!m.nodes.some(n=>n.id===phaseUI.pinned))phaseUI.pinned=null;if(!m.nodes.some(n=>n.id===phaseUI.preview))phaseUI.preview=null;
+ const lookup=new Map(m.nodes.map(n=>[n.id,n])),pos=n=>({x:24+n.column*275,y:40+n.row*170,h:n.kind==='decision'?130:90});let edges='';
+ const displayed=phaseDisplayDependencies(m);
+ for(const n of m.nodes)for(const dep of displayed.get(n.id)){const a=pos(lookup.get(dep)),b=pos(n),ax=a.x+220,ay=a.y+a.h/2,bx=b.x,by=b.y+b.h/2,mid=ax+27;
+  const route=n.column===lookup.get(dep).column?'M '+(a.x+110)+' '+(a.y+a.h)+' V '+b.y:n.column>lookup.get(dep).column+1?'M '+ax+' '+ay+' H '+mid+' V '+(b.y-22)+' H '+(bx-27)+' V '+by+' H '+bx:'M '+ax+' '+ay+' H '+mid+' V '+by+' H '+bx;
+  const condition=phaseCondition(n,dep),color=condition==='failed'?'#efbd64':condition==='completed'?'#91caff':'#a4b4c3',dash=condition==='failed'?'6 4':condition==='completed'?'3 3':'';
+  edges+='<path d="'+route+'" fill="none" stroke="'+color+'" stroke-width="2"'+(dash?' stroke-dasharray="'+dash+'"':'')+' marker-end="url(#phase-arrow)"><title>'+escapeHTML(lookup.get(dep).title+' → '+n.title+' · '+phaseTransition(n,dep))+'</title></path>';}
+ for(const n of m.nodes){const conditions=[...new Set(displayed.get(n.id).map(dep=>phaseCondition(n,dep)).filter(c=>c!=='accepted'))],labels=[...new Set(displayed.get(n.id).map(dep=>n.dependency_labels?.[dep]).filter(Boolean))];if(conditions.length||labels.length){const p=pos(n),label=labels.join(' / ')||(conditions.includes('failed')?'On failure: authorized repair':'On completion: independent review');edges+='<text x="'+p.x+'" y="'+(p.y-9)+'" fill="'+(conditions.includes('failed')?'#efbd64':'#91caff')+'" font-size="12">'+escapeHTML(label)+'</text>';}}
+
+ for(const loop of m.repair_loops||[]){const a=pos(lookup.get(loop.from)),b=pos(lookup.get(loop.to)),bottom=phaseUI.height-28;edges+='<path d="M '+(a.x+220)+' '+(a.y+a.h/2)+' H '+(a.x+246)+' V '+bottom+' H '+(b.x-18)+' V '+(b.y+b.h/2)+' H '+b.x+'" fill="none" stroke="#efbd64" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#phase-arrow)"><title>'+escapeHTML(loop.label)+'</title></path><text x="'+Math.min(a.x,b.x)+'" y="'+(bottom-8)+'" fill="#efbd64" font-size="13">'+escapeHTML(loop.label+' · '+loop.used+'/'+loop.limit+' allowed cycles used')+'</text>';}
+ const labels=(m.lanes||[]).map(l=>'<p class="phase-lane" style="left:24px;top:'+(10+Number(l.row)*170)+'px">'+escapeHTML(l.title)+'</p>').join('');
+ const nodes=m.nodes.map(n=>{const p=pos(n);return '<button type="button" id="phase-node-'+n.id+'" class="phase-node '+n.status+(n.kind==='decision'?' decision':'')+'" style="left:'+p.x+'px;top:'+p.y+'px;width:220px;height:'+p.h+'px" data-node="'+n.id+'" aria-expanded="false" aria-controls="phase-panel" aria-label="'+escapeHTML(n.title+'; '+phaseStatus(n.status)+'; show details')+'" onmouseenter="phaseUI.suppressPreview=false;showPhaseDetail(this.dataset.node)" onfocus="showPhaseDetail(this.dataset.node)" onmouseleave="leavePhaseDetail(this.dataset.node,event)" onblur="leavePhaseDetail(this.dataset.node,event)" onclick="showPhaseDetail(this.dataset.node,true)">'+(n.kind==='decision'?'<svg viewBox="0 0 220 130" aria-hidden="true"><polygon points="110,2 218,65 110,128 2,65" fill="#192530" stroke="currentColor" stroke-width="2"/></svg>':'')+'<span>'+escapeHTML(n.title)+'</span><small>'+phaseStatus(n.status)+'</small></button>';}).join('');
+ const canvas=el('phase-canvas'),markup='<svg class="phase-edges" width="'+phaseUI.width+'" height="'+phaseUI.height+'" aria-hidden="true"><defs><marker id="phase-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#a4b4c3"/></marker></defs>'+edges+'</svg>'+labels+nodes;
+ if(phaseUI.markup!==markup){phaseUI.markup=markup;const focus=document.activeElement?.id,left=scroll.scrollLeft,top=scroll.scrollTop;canvas.innerHTML=markup;if(focus?.startsWith('phase-node-'))el(focus)?.focus?.({preventScroll:true});scroll.scrollLeft=left;scroll.scrollTop=top;}
+ canvas.style.width=phaseUI.width+'px';canvas.style.height=phaseUI.height+'px';if(!phaseUI.initialized){phaseUI.initialized=true;phaseUI.left=0;phaseUI.top=0;scalePhase(.75,false);}else scalePhase(phaseUI.scale,false);if(phaseUI.restore){scroll.scrollLeft=phaseUI.left;scroll.scrollTop=phaseUI.top;phaseUI.restore=false;}renderPhasePanel();savePhaseView();
+ const omitted=m.nodes.reduce((sum,n)=>sum+n.depends_on.length-displayed.get(n.id).length,0);el('phase-edge-note').textContent=omitted?omitted+' shortcut arrow'+(omitted===1?'':'s')+' omitted because the sequence already shows the dependency. All required checks remain in step details and the accessible list.':'Arrows show the immediate sequence and genuine parallel branches. All required checks remain in step details and the accessible list.';
+ el('phase-heading').textContent=m.title;el('phase-summary').textContent=m.summary;el('phase-next').textContent='Next: '+m.next_action;
+ el('phase-freshness').textContent='Source revision '+m.source_revision+' · observed '+time(m.observed_at)+' · '+(m.provenance||'Recorded project state')+(Date.now()-Date.parse(m.observed_at)>300000?' · STALE phase facts':'');
+ const list=m.nodes.map(n=>'<li><strong>'+escapeHTML(n.title)+'</strong> · '+phaseStatus(n.status)+' · '+escapeHTML(n.owner)+'. All required checks: '+escapeHTML(n.depends_on.map(id=>lookup.get(id).title+' — '+phaseTransition(n,id)).join('; ')||'None')+'. '+escapeHTML(n.wait_reason)+'</li>').join('');const loopText=(m.repair_loops||[]).map(l=>'<li>Conditional return: '+escapeHTML(lookup.get(l.from).title+' → '+lookup.get(l.to).title+'. '+l.label+'; '+l.used+'/'+l.limit+' cycles used. No authority or extra attempts are granted by this diagram.')+'</li>').join('');if(el('phase-text-map').innerHTML!==list+loopText)el('phase-text-map').innerHTML=list+loopText;
+}
+function validate(s){
+ if(s.schema_version!==1||!Array.isArray(s.tasks)||!Array.isArray(s.decisions)||!Array.isArray(s.history)||!s.next||!s.watchdog||!s.outputs)throw Error('Unsupported or incomplete workflow state');
+ if(!Number.isFinite(Date.parse(s.baseline_at))||!Number.isFinite(Date.parse(s.updated_at)))throw Error('Invalid baseline/update timestamp');
+ if(s.collector&&(!['current','failed'].includes(s.collector.health)||!Number.isFinite(Date.parse(s.observed_at))))throw Error('Invalid source collector observation');
+ if(s.source_digest&&(!Number.isInteger(s.source_revision)||[s.phase_flow,s.phase_graph].filter(Boolean).some(m=>m.source_revision!==s.source_revision||m.provenance!==s.source_digest)))throw Error('Service/dashboard source identity mismatch');
+ if(lastGood&&s.project===lastGood.project&&Number.isInteger(s.source_revision)&&Number.isInteger(lastGood.source_revision)&&s.source_revision<lastGood.source_revision)throw Error('Older service source revision');
+ if(s.tasks.some(t=>!['pending','active','accepted','held'].includes(t.status)))throw Error('Invalid task status');
+ if(s.decisions.some(d=>!['pending','approved','declined','withdrawn','technical_hold'].includes(d.status)))throw Error('Invalid decision status');
+ if(s.history.some(p=>!Number.isFinite(Date.parse(p.at))||!Number.isFinite(p.remaining)||p.remaining<0))throw Error('Invalid burndown history');
+ const accepted=s.tasks.filter(t=>t.status==='accepted');
+ if(accepted.some(t=>!Number.isFinite(Date.parse(t.accepted_at))))throw Error('Accepted gate has no timestamp');
+ if(s.completed_at&&(!Number.isFinite(Date.parse(s.completed_at))||accepted.length!==s.tasks.length))throw Error('Completion requires all accepted gates');
+ if(s.forecast){const f=s.forecast;
+  if(f.additional_work&&(!Array.isArray(f.additional_work)||f.additional_work.some(x=>!x.title||typeof x.measured!=='string'||typeof x.outcome!=='string')))throw Error('Invalid additional forecast work');
+  const range=n=>[n.low_minutes,n.target_minutes,n.high_minutes].every(x=>Number.isFinite(x)&&x>=0)&&n.low_minutes<=n.target_minutes&&n.target_minutes<=n.high_minutes;
+  if(!f.id||!range(f)||![f.recorded_at,f.conditional_finish_at,f.conditional_earliest_at,f.conditional_latest_at].every(x=>Number.isFinite(Date.parse(x)))||!Array.isArray(f.steps)||f.steps.some(n=>!range(n)||!n.id||!n.title)||!Array.isArray(f.assumptions)||!Array.isArray(f.observations)||f.observations.some(o=>!f.steps.some(n=>n.id===o.step_id)||!Number.isFinite(Date.parse(o.observed_at))||[o.active_minutes,o.human_wait_minutes,o.technical_wait_minutes].some(x=>x!=null&&(!Number.isFinite(x)||x<0))))throw Error('Invalid forecast observation');
+ }
+ validatePhase(s.phase_graph);validatePhase(s.phase_flow);return s;
+}
+function drawChart(s,now){
+ const base=Date.parse(s.baseline_at), remaining=s.tasks.filter(t=>t.status!=='accepted').length;
+ const endTime=s.completed_at?Date.parse(s.completed_at):Math.max(now,Date.parse(s.updated_at));
+ const end=Math.max(1,(endTime-base)/60000);
+ const points=s.history.filter(p=>Date.parse(p.at)>=base&&Date.parse(p.at)<=endTime).slice().sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
+ const maximum=Math.max(1,s.tasks.length,...points.map(p=>p.remaining));
+ const x=v=>70+Math.min(end,Math.max(0,v))/end*850,y=v=>285-v/maximum*220;
+ let markup='<text x="70" y="24" fill="#a4b4c3" font-size="14">Approved gates remaining</text>';
+ const step=Math.max(1,Math.ceil(maximum/6));
+ for(let i=0;i<=maximum;i+=step)markup+='<line x1="70" y1="'+y(i)+'" x2="920" y2="'+y(i)+'" stroke="#344655"/><text x="44" y="'+(y(i)+5)+'" fill="#a4b4c3" font-size="14">'+i+'</text>';
+ for(let i=0;i<=4;i++){const m=end*i/4,label=end>=120?(m/60).toFixed(1)+' h':Math.round(m)+' min';markup+='<text x="'+x(m)+'" y="316" text-anchor="middle" fill="#a4b4c3" font-size="14">'+label+'</text>';}
+ if(points.length){let path='M '+x((Date.parse(points[0].at)-base)/60000)+' '+y(points[0].remaining);for(const p of points.slice(1))path+=' H '+x((Date.parse(p.at)-base)/60000)+' V '+y(p.remaining);path+=' H '+x(end);markup+='<path d="'+path+'" stroke="#91caff" stroke-width="3" fill="none"/>';
+ for(const p of points.slice(1)){const px=x((Date.parse(p.at)-base)/60000),py=y(p.remaining);markup+='<circle cx="'+px+'" cy="'+py+'" r="5" fill="#81d4b5"><title>'+escapeHTML(p.label+' · '+time(p.at))+'</title></circle><text x="'+px+'" y="'+(py-12)+'" text-anchor="'+(px>800?'end':'start')+'" fill="#81d4b5" font-size="13">'+escapeHTML(p.label)+'</text>';}}
+ else markup+='<text x="70" y="150" fill="#a4b4c3">No recorded gate history yet</text>';
+ markup+='<text x="490" y="352" text-anchor="middle" fill="#a4b4c3" font-size="14">Actual elapsed time since plan approval</text>';
+ el('plot').innerHTML=markup;el('chart-desc').textContent=remaining+' approved gates remain; '+end.toFixed(1)+' elapsed minutes.';
+ el('count').textContent=(s.tasks.length-remaining)+' completed · '+remaining+' remaining';
+ el('clock').textContent=(s.completed_at?'Completed duration: ':'Elapsed: ')+Math.floor((endTime-base)/3600000)+' h '+Math.floor((endTime-base)/60000)%60+' min · baseline '+time(s.baseline_at);
+ el('checklist').textContent=s.tasks.map(t=>t.id+': '+t.status+(t.accepted_at?' at '+time(t.accepted_at):'')).join(' · ');
+}
+function decisionCard(d){return '<div class="card '+(d.status==='pending'?'pending-decision':'')+'"><strong>'+escapeHTML(d.id+' · '+d.question)+'</strong><p>Suggested resolution: '+escapeHTML(d.recommendation)+'</p><p>Alternative: '+escapeHTML(d.alternatives)+'</p><p>Consequence: '+escapeHTML(d.consequence)+'</p>'+(d.status==='pending'||d.status==='technical_hold'?'<p><strong>'+(d.status==='technical_hold'?'Technical hold':'How to respond')+':</strong> '+escapeHTML(d.answer_destination||'Reply in the coordinator chat.')+'</p>':'')+'<small>'+escapeHTML('Gate '+d.gate+' · '+d.requested_by+' · requested '+time(d.requested_at))+'</small>'+(d.request_url?'<p>'+safeLink(d.request_url,'Open request / evidence')+'</p>':'')+(!['pending','technical_hold'].includes(d.status)?'<p>'+escapeHTML(d.status+' · '+(d.answer??'')+' · '+time(d.answered_at))+'</p>':'')+'</div>';}
+function renderUsage(u={}){
+ const count=v=>Number.isFinite(v)&&v>=0?v.toLocaleString():'Unavailable';
+ const money=(v,fallback)=>v&&Number.isFinite(v.amount)&&v.amount>=0&&typeof v.currency==='string'?v.currency+' '+v.amount.toFixed(2):fallback;
+ el('usage-total').textContent=count(u.total_tokens);
+ el('usage-breakdown').textContent='Input '+count(u.input_tokens)+' · Output '+count(u.output_tokens)+' · Cached input subset '+count(u.cached_input_tokens);
+ el('usage-estimate').textContent=money(u.api_equivalent,'Unpriced');
+ el('usage-billed').textContent=money(u.actual_billed,'Unavailable');
+ el('usage-assumptions').textContent=u.api_equivalent?.assumptions||'No compatible price estimate recorded.';
+ el('usage-coverage').textContent='Coverage: '+(u.partial?'PARTIAL · ':'')+(u.coverage||'No scoped usage collector is connected.');
+ el('usage-source').textContent='Source: '+(u.source||'Unavailable')+' · observed '+time(u.observed_at)+'. Cached/reasoning subsets are not added again.';
+}
+function renderForecast(f){
+ el('forecast').hidden=!f;if(!f)return;
+ const minutes=n=>Number.isFinite(n)?n.toFixed(1)+' min':'Not recorded';
+ el('forecast-summary').textContent=(f.current_status?f.current_status+' ':'')+f.target+': '+f.target_minutes+' active minutes originally planned ('+f.low_minutes+'–'+f.high_minutes+' minute range), plus approval waiting. '+f.confidence;
+ el('forecast-clock').textContent='Original '+f.id+' · recorded '+time(f.recorded_at)+' · conditional finish '+time(f.conditional_finish_at)+'; range '+time(f.conditional_earliest_at)+'–'+time(f.conditional_latest_at)+'. These clock times exclude additional waiting or repair; this original target does not slide with refresh.';
+ el('forecast-steps').innerHTML=f.steps.filter(n=>!n.historical).map(n=>{const a=f.observations?.filter(o=>o.step_id===n.id).at(-1),variance=Number.isFinite(a?.active_minutes)&&!a?.partial?(a.active_minutes-n.target_minutes).toFixed(1)+' min vs target':(a?.partial?'Partial timing; no total variance':'Duration not measured');return '<tr><th scope="row">'+escapeHTML(n.title)+'</th><td>'+n.target_minutes+' min ('+n.low_minutes+'–'+n.high_minutes+')</td><td>'+minutes(a?.active_minutes)+(a?.partial?' (partial)':'')+'</td><td>'+minutes(a?.human_wait_minutes)+'</td><td>'+minutes(a?.technical_wait_minutes)+'</td><td>'+escapeHTML(variance+' · '+(a?.event||'Not started'))+'</td></tr>';}).join('');
+ const extra=f.additional_work||[];el('forecast-added').hidden=!extra.length;
+ el('forecast-added-items').innerHTML=extra.map(x=>'<li><strong>'+escapeHTML(x.title)+'</strong> — '+escapeHTML(x.measured)+'. '+escapeHTML(x.outcome)+'</li>').join('');
+ el('forecast-accounting').textContent=f.accounting_note||'';
+ el('forecast-earlier').innerHTML=f.steps.filter(n=>n.historical).map(n=>'<li>'+escapeHTML(n.title+': '+phaseStatus(n.status_at_baseline)+'. 0 minutes remaining in this forecast; no original estimate reconstructed.')+'</li>').join('');
+ el('forecast-assumptions').innerHTML=f.assumptions.map(a=>'<li>'+escapeHTML(a)+'</li>').join('');
+ el('forecast-tracking').textContent=f.tracking+' Last observation: '+time(f.observations?.at(-1)?.observed_at);
+}
+function render(s,now=Date.now()){
+ renderPhase(s);
+ renderForecast(s.forecast);
+ el('project').textContent=s.project+(s.synthetic?' — SYNTHETIC EXAMPLE':'');el('stage').textContent=s.current_stage;el('stage-status').textContent=s.stage_status;
+ el('next').textContent='Next action: '+s.next.owner+' — '+s.next.action+' · Dependency: '+(s.next.dependency||'None');el('candidate').textContent='Candidate: '+(s.candidate||'Not frozen');
+ el('tasks').innerHTML=s.tasks.map(t=>'<div class="card '+(t.status==='accepted'?'accepted':t.status==='active'?'active':'')+'"><strong>'+escapeHTML(t.id+' · '+t.title)+'</strong><small>'+escapeHTML(t.status+(t.accepted_at?' · '+time(t.accepted_at):''))+'</small>'+(t.depends_on?.length?'<p>Requires '+escapeHTML(t.depends_on.join(', '))+'</p>':'')+'</div>').join('');
+ const pending=s.decisions.filter(d=>d.status==='pending'),held=s.decisions.filter(d=>d.status==='technical_hold');el('approval-count').textContent=pending.length?pending.length+' pending request(s)':'No approvals pending';el('decisions').innerHTML=[...pending,...held].map(decisionCard).join('');el('answered').innerHTML=s.decisions.filter(d=>!['pending','technical_hold'].includes(d.status)).map(decisionCard).join('')||'No answered requests recorded.';
+ el('approval-count').className=pending.length?'pending':'clear';
+ el('attention-note').textContent=pending.length?'Review the request below; it identifies the decision and what it affects.':(s.attention_note||'No user action is requested in this recorded state.');
+ el('blockers').innerHTML=(s.blockers||[]).map(b=>'<div class="card"><strong>'+escapeHTML(b.title)+'</strong><p>'+escapeHTML(b.detail)+'</p><small>Owner: '+escapeHTML(b.owner)+'</small><p>Next: '+escapeHTML(b.next_action)+'</p></div>').join('')||'<p>No technical blocker recorded.</p>';
+ renderUsage(s.usage||{});
+ el('agents').innerHTML=(s.agents||[]).map(a=>'<div class="card"><strong>'+escapeHTML(a.role)+'</strong><small>'+escapeHTML(a.status)+'</small><p>'+escapeHTML(a.assignment)+'</p></div>').join('');
+ el('watchdog').textContent='Watchdog: '+s.watchdog.status+(s.watchdog.id?' · every '+s.watchdog.interval_minutes+' min · ID '+s.watchdog.id+' · next run '+time(s.watchdog.next_run_at):'')+' · last audit '+time(s.watchdog.last_audit_at);
+ el('outputs').innerHTML=['di','lessons'].map(k=>'<p>'+escapeHTML(k==='di'?'Detailed investigation: ':'Lessons learned (child of DI): ')+(s.outputs[k]?.url?safeLink(s.outputs[k].url,s.outputs[k].status):escapeHTML(s.outputs[k]?.status||'Not recorded'))+'</p>').join('');
+ el('evidence').innerHTML=[...(s.findings||[]),...(s.evidence||[])].map(e=>'<li>'+escapeHTML(e)+'</li>').join('');
+ el('terms').innerHTML=[...commonTerms,...(s.glossary||[]).map(t=>[t.term,t.meaning])].map(([term,meaning])=>'<dt><strong>'+escapeHTML(term)+'</strong></dt><dd style="margin:0 0 12px">'+escapeHTML(meaning)+'</dd>').join('');drawChart(s,now);
+}
+let lastGood=null,lastFetch=null;
+async function refresh(){
+ try{const response=await fetch('workflow-state.json',{cache:'no-store'});if(!response.ok)throw Error('HTTP '+response.status);const s=validate(await response.json());lastFetch=Date.now();lastGood=s;render(s,lastFetch);const age=Math.max(0,Math.floor((lastFetch-Date.parse(s.updated_at))/1000));const failed=s.collector?.health==='failed',observationStale=s.observed_at&&lastFetch-Date.parse(s.observed_at)>300000;el('health').className=failed||age>300||observationStale?'error':'';el('health').textContent=(failed?'COLLECTION FAILED · retaining last good source · ':observationStale?'STALE observation · ':age>300?'STALE source · ':'Live display · ')+'build '+s.build_id+(s.source_revision?' · revision '+s.source_revision+' · '+s.source_digest:'')+' · source '+time(s.updated_at)+' ('+age+' s ago)'+(s.observed_at?' · observed '+time(s.observed_at):'')+' · fetch '+time(lastFetch);}
+ catch(error){if(lastGood)render(lastGood);el('health').className='error';el('health').textContent='Refresh failed: '+error.message+' · '+(lastGood?'retaining last good state; last fetch '+time(lastFetch):'no state loaded')+'. Serve this folder over HTTP; see setup instructions.';}
+}
+refresh();setInterval(refresh,2000);
+</script></body></html>

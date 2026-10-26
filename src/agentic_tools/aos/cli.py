@@ -26,11 +26,16 @@ def main(argv: list[str] | None = None) -> int:
         if name == 'archive-publish-local':
             command.add_argument('--fake-destination', type=Path, required=True)
     for name in ("serve", "status", "archive-preview", "archive-prepare-local", "prepare-decision", "decide-serve", "worker", "backup-ledger", "recover-startup-approval",
-                 "introduce-work", "present-concept", "register-contract", "admit", "pause", "resume", "cancel"):
+                 "introduce-work", "present-concept", "register-contract", "admit", "pause", "resume", "cancel",
+                 "dashboard-serve", "dashboard-inspect", "dashboard-stop"):
         command = commands.add_parser(name)
         command.add_argument("--state-dir", type=Path, required=True, help="Private authoritative directory outside all worker-writable roots")
         command.add_argument("--worker-writable-root", type=Path, action="append", required=True, help="Declare each worker-writable root; actual runtime denial still needs verification")
-        if name in ("introduce-work", "present-concept"):
+        if name.startswith("dashboard-"):
+            if name == "dashboard-serve":
+                command.add_argument("--work", action="append", required=True, help="Explicit allowed view: kebab-case-alias=WORK_ID; repeat for multiple works")
+                command.add_argument("--port", type=int, required=True, help="Loopback HTTP port; 0 requests an unused disposable port")
+        elif name in ("introduce-work", "present-concept"):
             command.add_argument("--request", type=Path, required=True, help="Strict JSON request; no approval answer is accepted")
         elif name in ("register-contract", "admit", "pause", "resume", "cancel"):
             command.add_argument("--operation-id", required=True, help="Stable ID; retry with identical arguments")
@@ -81,6 +86,16 @@ def main(argv: list[str] | None = None) -> int:
             from .coordinator import capabilities
             print(json.dumps(capabilities(), indent=2))
             return 0
+        if args.command.startswith("dashboard-"):
+            from .dashboard_service import DashboardService, inspect_service, stop_service, work_views
+            store = Store(args.state_dir, tuple(args.worker_writable_root), read_only=True)
+            if args.command == "dashboard-serve":
+                with DashboardService(store, work_views(args.work), args.port) as service:
+                    service.run()
+                return 0
+            result = inspect_service(store) if args.command == "dashboard-inspect" else stop_service(store)
+            print(json.dumps(result, indent=2))
+            return 3 if result.get("state") == "unavailable" else 0
         if args.command in ("introduce-work", "present-concept"):
             from .coordinator import ConceptRequest, IntroductionRequest, request_file
             request = request_file(args.request, IntroductionRequest if args.command == "introduce-work" else ConceptRequest)

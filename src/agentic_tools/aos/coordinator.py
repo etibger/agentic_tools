@@ -142,7 +142,9 @@ def capabilities() -> dict:
             "source_digest": "sha256:" + source_digest,
             "source_scope": "AOS Python package files; excludes state, configuration, dependencies and documentation",
             "coordinator_commands": ["introduce-work", "present-concept", "register-contract", "prepare-decision", "decide-serve",
-                                     "admit", "status", "pause", "resume", "cancel", "worker", "version"],
+                                     "admit", "status", "pause", "resume", "cancel", "worker", "version",
+                                     "dashboard-serve", "dashboard-inspect", "dashboard-stop"],
+            "dashboard_service_version": 1,
             "workflow_control_transport": "trusted coordinator CLI using Store/Lifecycle/Worker",
             "coordinator_accepts_approval_answer": False, "mcp_workflow_control": False,
             "qualification": "Command availability is not actual-host, desktop or Herdr qualification"}
