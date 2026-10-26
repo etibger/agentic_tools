@@ -6,14 +6,14 @@
   "updated_at": "2030-01-01T10:32:00Z",
   "baseline_at": "2030-01-01T10:00:00Z",
   "completed_at": null,
-  "current_stage": "T2 — Configuration",
+  "current_stage": "T2 \u2014 Configuration",
   "stage_status": "Independent assessment",
   "next": {
     "owner": "Coordinator",
     "action": "Join the three independent initial reports and exchange findings",
     "dependency": "Await Verification report"
   },
-  "candidate": "C2 — frozen scoped patch",
+  "candidate": "C2 \u2014 frozen scoped patch",
   "tasks": [
     {
       "id": "T0",
@@ -91,7 +91,7 @@
       "assignment": "Assess frozen C2"
     },
     {
-      "role": "Devil’s Advocate",
+      "role": "Devil\u2019s Advocate",
       "status": "Active",
       "assignment": "Assess frozen C2"
     },
@@ -147,5 +147,86 @@
   "evidence": [
     "Exact check commands, candidate IDs, retained reports and coverage limits belong here."
   ],
-  "findings": []
+  "findings": [],
+  "phase_graph": {
+    "id": "configuration",
+    "title": "Inside configuration \u00b7 synthetic example",
+    "summary": "A sample branch and join; all facts in this example are synthetic.",
+    "next_action": "Complete the independent check before integration.",
+    "source_revision": "synthetic-1",
+    "observed_at": "2030-01-01T10:32:00Z",
+    "provenance": "Synthetic example, not a running project",
+    "lanes": [
+      {
+        "row": 0,
+        "title": "IMPLEMENTATION"
+      },
+      {
+        "row": 1,
+        "title": "INDEPENDENT BRANCH"
+      }
+    ],
+    "nodes": [
+      {
+        "id": "source",
+        "title": "Frozen source",
+        "status": "accepted",
+        "owner": "Sample implementer",
+        "summary": "Sample candidate frozen.",
+        "wait_reason": "Complete.",
+        "depends_on": [],
+        "column": 0,
+        "row": 0,
+        "observed_at": "2030-01-01T10:32:00Z",
+        "evidence": []
+      },
+      {
+        "id": "review",
+        "title": "Independent check",
+        "status": "active",
+        "owner": "Sample assessor",
+        "summary": "Sample checking underway.",
+        "wait_reason": "Finish checks.",
+        "depends_on": [
+          "source"
+        ],
+        "column": 1,
+        "row": 0,
+        "observed_at": "2030-01-01T10:32:00Z",
+        "evidence": []
+      },
+      {
+        "id": "docs",
+        "title": "Consumer notes",
+        "status": "review",
+        "owner": "Sample documentation owner",
+        "summary": "Notes prepared for review.",
+        "wait_reason": "Review the notes.",
+        "depends_on": [
+          "source"
+        ],
+        "column": 1,
+        "row": 1,
+        "observed_at": "2030-01-01T10:32:00Z",
+        "evidence": []
+      },
+      {
+        "id": "join",
+        "title": "Integration gate",
+        "status": "waiting",
+        "owner": "Sample coordinator",
+        "summary": "Join both required branches.",
+        "wait_reason": "Both branches must pass.",
+        "depends_on": [
+          "review",
+          "docs",
+          "source"
+        ],
+        "column": 2,
+        "row": 0,
+        "observed_at": "2030-01-01T10:32:00Z",
+        "evidence": []
+      }
+    ]
+  }
 }
