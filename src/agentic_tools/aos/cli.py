@@ -25,7 +25,7 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument('--intent-id', required=True)
         if name == 'archive-publish-local':
             command.add_argument('--fake-destination', type=Path, required=True)
-    for name in ("serve", "status", "archive-preview", "archive-prepare-local", "prepare-decision", "decide-serve", "worker", "backup-ledger", "recover-startup-approval",
+    for name in ("serve", "serve-coordinator", "status", "archive-preview", "archive-prepare-local", "prepare-decision", "decide-serve", "worker", "backup-ledger", "recover-startup-approval",
                  "introduce-work", "present-concept", "register-contract", "admit", "pause", "resume", "cancel",
                  "dashboard-serve", "dashboard-inspect", "dashboard-stop", "reconcile-prerequisites", "restore-ledger"):
         command = commands.add_parser(name)
@@ -43,6 +43,9 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--work-id", required=True)
             command.add_argument("--expected-work-revision", required=True, type=int)
             command.add_argument("--digest", required=True, help="Intended exact current concept digest")
+        elif name == "serve-coordinator":
+            command.add_argument("--audience", choices=("host", "worker"), default="host")
+            command.add_argument("--decision-origin", required=True, help="Existing loopback HTTPS human-decision service origin")
         elif name == "serve":
             command.add_argument("--audience", choices=("host", "worker"), default="host")
             command.add_argument("--qualified-human-host-name", help="Operator configuration only; name is not proof of human identity")
@@ -215,6 +218,11 @@ def main(argv: list[str] | None = None) -> int:
             store = Store(args.state_dir, tuple(args.worker_writable_root))
             serve_https(store, certificate=str(args.certificate), key=str(args.key), port=args.port,
                         qualification_reference=args.qualification_reference)
+            return 0
+        if args.command == "serve-coordinator":
+            from .coordinator_mcp import create_coordinator_server
+            store = Store(args.state_dir, tuple(args.worker_writable_root), read_only=args.audience == "worker")
+            create_coordinator_server(store, decision_origin=args.decision_origin, audience=args.audience).run(transport="stdio")
             return 0
         if bool(args.qualified_human_host_name) != bool(args.qualification_reference):
             parser.error("qualified host name and qualification evidence reference must be configured together")

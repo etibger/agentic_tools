@@ -188,14 +188,14 @@ def test_explicit_known_cancellation_mutations_are_durable_before_resource_relea
 
 def test_version_receipt_explicitly_distinguishes_component_and_distribution(capsys):
     receipt = version_receipt()
-    assert receipt['aos_component_version'] == '0.2.4'
+    assert receipt['aos_component_version'] == '0.2.5'
     assert receipt['distribution_name'] == 'agentic-tools'
     assert receipt['distribution_version'] == version('agentic-tools')
     with pytest.raises(SystemExit) as exit:
         main(['--version'])
     assert exit.value.code == 0
     output = capsys.readouterr().out
-    assert 'AOS component 0.2.4' in output and f"agentic-tools distribution {version('agentic-tools')}" in output
+    assert 'AOS component 0.2.5' in output and f"agentic-tools distribution {version('agentic-tools')}" in output
 
 
 def test_pause_survives_deadline_stop_and_restart(tmp_path):

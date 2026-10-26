@@ -158,8 +158,8 @@ def capabilities() -> dict:
             "coordinator_commands": ["introduce-work", "present-concept", "register-contract", "prepare-decision", "decide-serve",
                                      "admit", "status", "pause", "resume", "cancel", "worker", "version",
                                      "dashboard-serve", "dashboard-inspect", "dashboard-stop", "reconcile-prerequisites",
-                                     "backup-ledger", "restore-ledger"],
+                                     "backup-ledger", "restore-ledger", "serve-coordinator"],
             "dashboard_service_version": 1,
-            "workflow_control_transport": "trusted coordinator CLI using Store/Lifecycle/Worker",
-            "coordinator_accepts_approval_answer": False, "mcp_workflow_control": False,
+            "workflow_control_transport": "trusted coordinator CLI and MCP using the same Store/Lifecycle; explicit Worker process",
+            "coordinator_accepts_approval_answer": False, "mcp_workflow_control": True,
             "qualification": "Command availability is not actual-host, desktop or product qualification"}
