@@ -54,6 +54,10 @@ def test_legacy_approved_concept_without_execution_envelope_stays_approved_and_h
     assert lifecycle.admit('admit', 'Q1')['execution'] == 'held'
     assert store.read('Q1')['concept_decision'] == 'approved'
     assert len(store.read('Q1')['decisions']) == 1 and not store.read('Q1')['pending_decisions']
+    reopened = Store(store.directory, (tmp_path / 'fixture',), read_only=True).read('Q1')
+    assert reopened['decisions'] == store.read('Q1')['decisions']
+    assert reopened['concept_decision'] == 'approved' and reopened['execution'] == 'held'
+    assert not reopened['pending_decisions']
 
 
 @pytest.mark.parametrize('field,value', [('model', 'UNAPPROVED-MODEL'), ('authority', 'Install elsewhere'), ('max_seconds', 61)])

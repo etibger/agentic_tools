@@ -1,6 +1,8 @@
 """Delay, renewal and exact proposal selection use the ordinary HTTP surface."""
 from http.client import HTTPConnection
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+import json
 import re
 import sqlite3
 from urllib.parse import urlencode
@@ -8,7 +10,7 @@ from urllib.parse import urlencode
 import pytest
 
 from agentic_tools.aos.approval_web import DecisionController
-from agentic_tools.aos.store import Rejected
+from agentic_tools.aos.store import Rejected, Store, canonical, digest
 from test_aos_approval_web import fixture, running_page, get_form, post
 from test_aos_store import TEAM
 
@@ -117,4 +119,75 @@ def test_restart_discards_old_credentials_and_preserves_pending_exact_proposal(t
     assert second.use_session(token, challenge, token, 'approve') == 'invalid'
     fresh = second.issue_session(challenge)
     assert second.use_session(fresh, challenge, fresh, 'approve') == 'new'
+    assert not store.read('WEB-TEST')['decisions']
+
+
+@pytest.mark.parametrize('stage', ['before_decision_commit', 'after_decision_commit', 'decision_readback'])
+def test_same_http_answer_reconciles_recording_failure_without_second_approval(tmp_path, stage):
+    store, proposal = fixture(tmp_path)
+    with running_page(store) as (port, origin):
+        conn, _, cookie, challenge, csrf = get_form(port)
+        def fail(actual):
+            if actual == stage:
+                raise sqlite3.OperationalError('SIMULATED recording or reply failure')
+        store._fault = fail
+        assert post(conn, cookie, challenge, csrf, 'approve', origin) == 503
+        assert len(store.read('WEB-TEST')['decisions']) == (0 if stage == 'before_decision_commit' else 1)
+        assert post(conn, cookie, challenge, csrf, 'decline', origin) == 409
+        store._fault = lambda _: None
+        assert post(conn, cookie, challenge, csrf, 'approve', origin) == 200
+        conn.close()
+    reader = Store(store.directory, store.worker_writable_roots, read_only=True)
+    saved = reader.read('WEB-TEST')
+    assert len(saved['decisions']) == 1 and saved['concept_decision'] == 'approved'
+    assert saved['execution'] == 'held' and not saved['pending_decisions']
+    assert reader.verify_decision(saved['decisions'][0]['decision_id'])['digest'] == proposal['digest']
+
+
+def test_concurrent_opposite_answers_with_preissued_credentials_record_one_terminal_decision(tmp_path):
+    store, _ = fixture(tmp_path)
+    with running_page(store) as (port, origin):
+        forms = [get_form(port), get_form(port)]
+        def answer(index):
+            conn, _, cookie, challenge, csrf = forms[index]
+            try:
+                return post(conn, cookie, challenge, csrf, ('approve', 'decline')[index], origin)
+            finally:
+                conn.close()
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            assert sorted(pool.map(answer, range(2))) == [200, 409]
+    assert len(store.read('WEB-TEST')['decisions']) == 1
+
+
+@pytest.mark.parametrize('mutation', ['package_bytes', 'concept_revision', 'work_identity'])
+def test_issued_form_cannot_answer_a_different_saved_package(tmp_path, mutation):
+    store, _ = fixture(tmp_path)
+    with running_page(store) as (port, origin):
+        conn, _, cookie, challenge, csrf = get_form(port)
+        with store._transaction() as db:
+            if mutation == 'concept_revision':
+                db.execute('UPDATE work SET current_concept=2')
+            else:
+                package = json.loads(db.execute('SELECT package FROM concept').fetchone()[0])
+                package['body' if mutation == 'package_bytes' else 'work_id'] = 'SIMULATED:different-approved-identity'
+                db.execute('UPDATE concept SET package=?,digest=?', (canonical(package), digest(package)))
+        assert post(conn, cookie, challenge, csrf, 'approve', origin) in {403, 409}
+        conn.close()
+    assert not store.read('WEB-TEST')['decisions']
+
+
+@pytest.mark.parametrize('headers', [
+    {'Origin': 'https://foreign.example', 'Sec-Fetch-Site': 'same-origin'},
+    {'Origin': 'null', 'Sec-Fetch-Site': 'cross-site'}, {'Origin': 'null'}, {'Sec-Fetch-Site': 'same-origin'},
+])
+def test_valid_credential_never_replaces_required_origin_and_fetch_metadata(tmp_path, headers):
+    store, _ = fixture(tmp_path)
+    with running_page(store) as (port, _):
+        conn, _, cookie, challenge, csrf = get_form(port)
+        body = urlencode({'challenge': challenge, 'csrf': csrf, 'choice': 'approve'})
+        conn.request('POST', '/decide', body, {'Content-Type': 'application/x-www-form-urlencoded', 'Cookie': cookie, **headers})
+        reply = conn.getresponse()
+        assert reply.status == 403
+        reply.read()
+        conn.close()
     assert not store.read('WEB-TEST')['decisions']

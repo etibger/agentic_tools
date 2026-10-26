@@ -326,3 +326,99 @@ def test_new_conflict_during_coordinator_recovery_requires_all_current_conflicts
     assert len(current_ids) == 2
     lifecycle.resolve_owned_stop_conflict(assignment['assignment_id'], current_ids, receipt(assignment), 'Both owned children reconciled')
     assert source(lifecycle)['stop_conflicts'] == [] and source(lifecycle)['resources']
+
+
+def test_conflict_journal_remains_authoritative_without_derived_blocker(tmp_path):
+    store, lifecycle, fake, assignment, proved, _ = conflicted(tmp_path)
+    with store._transaction() as db:
+        db.execute("DELETE FROM technical_blocker WHERE code='stop_receipt_conflict'")
+    lifecycle = reopen(tmp_path, store)
+    lifecycle.control('cancel-from-journal', 'Q1', 'cancel')
+    lifecycle.cancellation_result('Q1', [])
+    held = source(lifecycle)
+    assert held['execution'] == 'held' and held['resources'] and held['stop_conflicts']
+    lifecycle.resolve_owned_stop_conflict(assignment['assignment_id'],
+        [c['conflict_id'] for c in held['stop_conflicts']], proved, 'SIMULATED:exact saved attempt inspection')
+    fake.cancel = lambda _: pytest.fail('A resolved known stop must not run again')
+    with Worker(reopen(tmp_path, store), fake) as worker:
+        worker.tick()
+        worker.tick()
+    assert source(lifecycle)['execution'] == 'cancelled' and source(lifecycle)['resources'] == []
+    assert count_attempts(fake) == 1
+
+
+def test_lost_stop_reply_reconciles_the_same_attempt_after_restart(tmp_path):
+    store, lifecycle, fake, assignment = active(tmp_path, max_seconds=1)
+    cancel = fake.cancel
+    calls = []
+    def lost_reply(attempt):
+        calls.append(attempt)
+        cancel(attempt)
+        raise OSError('SIMULATED lost reply after exact runtime stop')
+    fake.cancel = lost_reply
+    with store._transaction() as db:
+        db.execute("UPDATE assignment SET sent_at='2000-01-01T00:00:00+00:00'")
+    with Worker(lifecycle, fake) as worker:
+        worker.tick()
+    assert source(lifecycle)['owned_stops'][0]['state'] == 'blocked_unknown_effects'
+    lifecycle = reopen(tmp_path, store)
+    fake.cancel = lambda attempt: (calls.append(attempt), cancel(attempt))[1]
+    with Worker(lifecycle, fake) as worker:
+        worker.tick()
+        worker.tick()
+    after = source(lifecycle)
+    assert calls == [assignment['attempt_id'], assignment['attempt_id']]
+    assert after['owned_stops'][0]['state'] == 'stopped'
+    assert after['execution'] == 'held' and after['resources'] and count_attempts(fake) == 1
+
+
+def test_interrupted_conflict_resolution_rolls_back_receipt_event_and_blocker(tmp_path):
+    store, lifecycle, _, assignment, proved, _ = conflicted(tmp_path)
+    before = source(lifecycle)
+    ids = [c['conflict_id'] for c in before['stop_conflicts']]
+    touch = lifecycle._touch
+    def interrupt(db, work_id, kind, detail):
+        touch(db, work_id, kind, detail)
+        if kind == 'owned_stop_conflict_resolved':
+            raise OSError('SIMULATED interruption before resolution commit')
+    lifecycle._touch = interrupt
+    changed = {**proved, 'partial_mutations': {'status': 'recorded', 'changes': ['fixture.py']}}
+    with pytest.raises(OSError, match='SIMULATED'):
+        lifecycle.resolve_owned_stop_conflict(assignment['assignment_id'], ids, changed, 'SIMULATED:reconciled files')
+    lifecycle = reopen(tmp_path, store)
+    assert source(lifecycle) == before
+    assert lifecycle.resolve_owned_stop_conflict(assignment['assignment_id'], ids, changed,
+                                                'SIMULATED:reconciled files') == {'disposition': 'resolved'}
+    assert source(lifecycle)['owned_stops'][0]['observation'] == changed
+
+
+def test_old_resolution_replay_cannot_clear_a_later_contradiction(tmp_path):
+    store, lifecycle, fake, assignment, proved, contradiction = conflicted(tmp_path)
+    old_ids = [c['conflict_id'] for c in source(lifecycle)['stop_conflicts']]
+    evidence = 'SIMULATED:first exact attempt inspection'
+    lifecycle.resolve_owned_stop_conflict(assignment['assignment_id'], old_ids, proved, evidence)
+    lifecycle.owned_stop_result(assignment['assignment_id'], {**contradiction, 'owned_processes': ['SIMULATED:later-child']})
+    lifecycle = reopen(tmp_path, store)
+    before = source(lifecycle)
+    assert lifecycle.resolve_owned_stop_conflict(assignment['assignment_id'], old_ids, proved, evidence) == {'disposition': 'duplicate'}
+    assert source(lifecycle) == before
+    lifecycle.control('cancel-after-new-conflict', 'Q1', 'cancel')
+    lifecycle.cancellation_result('Q1', [proved])
+    assert source(lifecycle)['resources'] and source(lifecycle)['stop_conflicts'] and count_attempts(fake) == 1
+
+
+def test_conflict_arriving_during_cancel_is_rechecked_before_resource_release(tmp_path):
+    store, lifecycle, fake, assignment, proved, contradiction = conflicted(tmp_path)
+    lifecycle.control('cancel-with-race', 'Q1', 'cancel')
+    def cancellation(attempt):
+        assert attempt == assignment['attempt_id']
+        lifecycle.resolve_owned_stop_conflict(assignment['assignment_id'],
+            [c['conflict_id'] for c in source(lifecycle)['stop_conflicts']], proved, 'SIMULATED:callback inspection')
+        lifecycle.owned_stop_result(assignment['assignment_id'], {**contradiction, 'owned_processes': ['SIMULATED:racing-child']})
+        return proved
+    fake.cancel = cancellation
+    with Worker(lifecycle, fake) as worker:
+        worker.tick()
+    after = source(reopen(tmp_path, store))
+    assert after['execution'] == 'held' and after['resources'] and after['stop_conflicts']
+    assert after['owned_stops'][0]['observation'] == proved and count_attempts(fake) == 1
