@@ -30,6 +30,7 @@ def document(content: str) -> bytes:
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AOS decision</title><style>
 body{margin:0;padding:24px;background:#0f171f;color:#e0e7ee;font:18px/1.5 system-ui}
+a,a:visited{color:#9bd5ff;text-underline-offset:3px}a:focus-visible{outline:2px solid #efbd64;outline-offset:4px}
 main{max-width:850px;margin:auto}h1{color:#efbd64}section{background:#192530;border:1px solid #445a6c;border-radius:12px;padding:22px}
 .note{border-left:4px solid #efbd64;padding:10px 14px;background:#283442}
 button{font:inherit;border:0;border-radius:8px;padding:10px 18px;margin:8px 8px 0 0;cursor:pointer}
