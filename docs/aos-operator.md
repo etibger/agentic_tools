@@ -4,6 +4,12 @@ The maintained `aos` CLI is the coordinator route for introducing work, saving i
 
 These commands establish an operator interface. Actual desktop integration, service lifetime, worker sandbox denial and Herdr readiness require their separately retained qualification evidence. A successful simulated workflow does not establish those results. The CLI has no command or flag for supplying a human approval answer.
 
+## Current qualified boundary
+
+Candidate `d527ea5` has separate independent acceptance for the bounded Python fixture and actual local desktop journey. The current real executor still requires the original qualification budget, caps a recipe at five minutes, and interprets verification through pytest/JUnit. Do not present it as a ready Herdr/Rust executor, spend the remaining qualification allowance on product work, or reset the ledger. Reusable native check adapters and separately approved product allowances are proposed work; product commands and acceptance limits belong to the owning project.
+
+Use the explicit CLI state directory and worker roots for the intended shared service. A connector reporting version 0.2.3 can still point at earlier prototype state: if that connector cannot find work which the authoritative ledger contains, investigate the connection without recreating the approval. MCP workflow controls are unavailable. Verify the receiving chat against the same known work, source identity and dashboard before handoff; a check in another chat does not satisfy that requirement.
+
 ## Environment and authority
 
 Run from the source checkout using its locked environment:
