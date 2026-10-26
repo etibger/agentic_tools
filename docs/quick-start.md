@@ -6,9 +6,9 @@ Choose by the work's purpose, then let the coordinator recommend assurance from 
 
 | Your request | Download | First output |
 | --- | --- | --- |
-| Something violates its intended behavior | [Bug-fix kickoff](downloads/bug-fix-kickoff.txt) | Reproduction or precise limitation and bounded repair plan |
-| An existing product needs changed behavior | [Feature-change kickoff](downloads/feature-change-kickoff.txt) | Impact/design and first useful increment |
-| A new product needs discovery and feasibility | [New-product kickoff](downloads/new-product-kickoff.txt) | Bounded discovery/feasibility plan and first-release decision |
+| Something violates its intended behavior | [Bug-fix kickoff](downloads/bug-fix-kickoff.txt) | Project/team introduction, then reproduction and a DI for Concept Approval |
+| An existing product needs changed behavior | [Feature-change kickoff](downloads/feature-change-kickoff.txt) | Project/team introduction, then an impact/design DI for Concept Approval |
+| A new product needs discovery and feasibility | [New-product kickoff](downloads/new-product-kickoff.txt) | Project/team introduction, bounded discovery and a first-release Concept Approval |
 
 For a task already using the full feature package, use the [extended recipe](extended-feature-start.md). Do not silently replace an active project's acceptance or authority with a different workflow.
 
@@ -20,7 +20,9 @@ Choose local edits, Git actions, installation/deployment and external publicatio
 
 ## 3. Record assurance and decisions
 
-The coordinator records lightweight, standard or elevated assurance and why. Roles are responsibilities; separate workers exist for useful independent work, not a fixed crew size. A settled clear repair instruction does not require a second approval. An unresolved behavior, material change or missing authority needs a concrete decision.
+Before investigation, the coordinator shows the phases/dependencies, initial/provisional team, responsibility grades, proposed models/effort and investigation bounds. Record lightweight, standard or elevated assurance and why. Roles are responsibilities; separate workers exist for useful independent work, not a fixed crew size.
+
+Present a proportionate DI with solution, tests/acceptance, ordered plan, team and execution limits. Obtain explicit user Concept Approval for its exact revision before implementation; a broad repair request does not waive it. Record an existing exact-package approval or explicit task-specific waiver once. After approval, confirm the actual execution team and proceed within its approved envelope. Material changes receive a focused decision.
 
 ## 4. Execute and accept a useful increment
 
@@ -30,4 +32,4 @@ The new profiles are manually reviewed contracts. The current `check_gate.py` re
 
 ## 5. Deliver and learn
 
-Demonstrate the agreed user journey and state the final candidate, actual checks, coverage gaps, maintained documentation and receiving owner. Distinguish local acceptance, commit, install and release. Record proportionate learning and selected follow-up actions. Start with one bounded bug-fix pilot before expanding orchestration automation.
+Demonstrate the agreed user journey and state the final candidate, actual checks, coverage gaps, maintained documentation and receiving owner. Distinguish local acceptance, commit, install and release. Record proportionate learning and selected follow-up actions. The [AOS concept](aos-concept.md) proposes a small shared core and bug-fix runner before a real-project service pilot; implementation remains subject to its Concept Approval.

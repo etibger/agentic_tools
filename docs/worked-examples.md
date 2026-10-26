@@ -4,6 +4,8 @@ These are routing and contract walkthroughs, not newly executed projects. Financ
 
 The examples are independently written and omit private data, internal-service links, raw records and source archives. Names describe scenarios; the workflow/profile selections below are proposed pilot choices, not retroactive changes to any project's approved process.
 
+For a new run of any example, the [toolbox introduction and approval rules](toolbox.md#decisions-and-handoffs) apply: show the structure and team before investigation, then present a proportionate DI and obtain explicit Concept Approval before implementation. The abbreviated paths below do not waive these steps. Historical approvals remain evidence about their original projects only.
+
 | Example | Entry point | Suggested assurance | First useful evidence |
 | --- | --- | --- | --- |
 | Finance report correction | Bug fix | Standard for a derived-report change; reassess before ledger mutation | Minimal synthetic input reproduces the incorrect report |

@@ -12,6 +12,8 @@ Repair a defect, change an existing product or discover a new one. Use a shared 
 
 The toolbox builds on an existing multi-agent feature practice and its retrospectives. The three new entry points are pilot contracts; they do not introduce an autonomous orchestration service. Start with the [shared work contract](downloads/work-contract.txt) plus one kickoff.
 
+The approved [AOS investigation and Concept Approval package](aos-concept.md) defines a shared local core and bug-fix runner operated through ChatGPT macOS. The [M0 prototype](aos-concept.md#m0-prototype-and-qualification-result) is implemented. Chat record access and bounded runtime interruption/command cleanup are demonstrated; human confirmation remains unqualified. New projects show their structure/team before investigation and require explicit Concept Approval before implementation.
+
 ## Select the purpose and assurance
 
 | Workflow | Question | First useful evidence |

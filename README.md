@@ -16,10 +16,12 @@ The link opens the live GitHub-hosted HTML guide from any device. Both the guide
 
 1. Read the [toolbox specification](docs/toolbox.md) and use the [worked examples](docs/worked-examples.md) to choose an entry point.
 2. Provide the completed [shared work contract](templates/work-contract.md) alongside the selected kickoff. The coordinator records lightweight, standard or elevated assurance from effects and uncertainty.
-3. Resolve consequential choices, then execute useful increments within existing authority, using native project commands and applicable instructions.
+3. Show the project structure and proposed team/model settings, prepare a proportionate DI, and obtain Concept Approval before implementation. Confirm the actual team, then execute useful increments within the approved authority using native project commands.
 4. Accept the agreed user outcome with actual evidence, limits and receiving ownership. The coordinator consumes every completion and dispatches the next ready authorized assignment.
 
 The new entry points are pilot manual contracts. External publication, dashboards, recurring monitoring and separate narrative roles are explicit choices. The current gate checker supports the extended feature record only; profile-aware validation and automatic dispatch are not implemented. Copying a template does not start agents or services.
+
+The approved [AOS investigation and Concept Approval package](docs/aos-concept.md) defines one shared local service and a bug-fix runner first. The [M0 prototype](docs/aos-concept.md#m0-prototype-and-qualification-result) implements durable records and a local tool interface. Chat record access, bounded runtime interruption/command cleanup, and a supervised human decision in the Codex HTTPS side tab have been qualified. Autonomous project execution is not enabled; the approved feature-pilot amendment requires disposable workflow and recovery evidence before Herdr admission.
 
 ## Extended multi-agent feature recipe
 

@@ -15,6 +15,8 @@ Provide the completed shared contract alongside exactly one kickoff. See the [qu
 
 Publication and monitoring are explicit choices for these entry points. Blank authority fields add no permissions.
 
+Toolbox v0.2 adds the project/team introduction, responsibility grades and proposed model/effort settings before investigation, followed by DI and explicit Concept Approval before implementation. The approved [AOS concept](aos-concept.md) records the first prototype and its remaining qualification holds; the templates remain manually operated.
+
 ## Extended feature package
 
 The original full-package recipe retains its defaults. Use it explicitly through the [extended quick start](extended-feature-start.md); it is not automatically selected by elevated assurance.
