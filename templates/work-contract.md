@@ -13,6 +13,7 @@ Provide this contract together with exactly one kickoff: bug-fix, feature-change
 - Committed acceptance / exclusions / compatibility:
 - Delivery boundary / receiving maintainer:
 - Existing approved decisions / unresolved decisions:
+- Decision-owner explanation: use `decision-brief.md` for each needed choice; retain the exact approval boundary and visible limits.
 - Authority: local edits [scope]; commits [yes/no]; branch [name/none]; push/PR [yes/no]; install/deploy [scope/none]; external publication [destination/audience/none]; recurring monitoring [scope/none]. Unset fields grant no additional authority; continue unaffected authorized work.
 - Environment / native check recipes / relevant requirement-source versions:
 - Shared resources / exclusive executor / recovery and release condition:

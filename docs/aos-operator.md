@@ -1,6 +1,6 @@
 # AOS coordinator commands
 
-The maintained `aos` CLI is the coordinator route for introducing work, saving its exact concept and execution envelope, preparing the existing HTTPS decision, admitting approved work, and pausing, resuming or cancelling it. It calls the same Store, Lifecycle and Worker used by the existing service. The MCP bridge does not expose workflow admission or lifecycle controls.
+The maintained `aos` CLI and trusted coordinator MCP connection introduce work, save its exact concept and execution envelope, prepare the existing HTTPS decision, admit approved work, and pause, resume or cancel it. They call the same Store, Lifecycle and Worker used by the existing service. The separate legacy M0 MCP bridge does not expose workflow admission or lifecycle controls.
 
 These commands establish an operator interface. Actual desktop integration, service lifetime, worker sandbox denial and Herdr readiness require their separately retained qualification evidence. A successful simulated workflow does not establish those results. The CLI has no command or flag for supplying a human approval answer.
 
@@ -16,19 +16,38 @@ AOS **0.2.5** adds the optional `serve-coordinator` MCP transport over the exist
 
 Configure `aos serve-coordinator` with the same `--state-dir` and complete `--worker-writable-root` list as the shared service, plus its existing `--decision-origin https://127.0.0.1:8443`. Use a trusted project’s local `.codex/config.toml`; do not publish machine paths or enable the coordinator in assigned workers. The old `serve` command remains the isolated M0 compatibility/probe surface and must not be confused with this route.
 
-The connection exposes six tools:
+The connection exposes seven tools:
 
 - `interface_capabilities`: exact component/source identity, connected ledger and declared roots.
 - `read_work`: current record and operator capabilities, including separate approval and execution status.
 - `read_service_status` and `read_dashboard`: the existing ledger projections.
 - `operation_schema`: the strict input schema for an operation.
 - `coordinator_operation`: introduce work, present a complete concept, register its contract, prepare a decision, reconcile existing prerequisites, admit, pause, resume or cancel.
+- `wait_for_decision` (0.2.6): observe the exact prepared HTTPS decision during one bounded pending tool call.
 
 Read the operation schema, supply its exact request, and read work back after a mutation. Concept requests include the complete execution envelope; omitted fields are not silently added. Operation IDs, stale revision/digest rejection and approval/resource/budget gates are identical to the CLI. `prepare-decision` returns the existing HTTPS link and accepts no approval answer. A successful tool response can still contain a recorded hold; inspect the execution state and blockers.
 
 Admission makes approved work eligible. It does not launch a worker process. The existing bounded `aos worker` command still owns execution and cancellation cleanup; a coordinator must explicitly operate that process with the approved recipe. There is no new background launcher, process-stop tool or automatic chat wake-up. The optional worker audience is read-only, and actual assigned-agent filesystem/network/integration denial remains mandatory.
 
-After changing a project connection, refresh that MCP connection and verify tool discovery in the receiving chat. Confirm `mcp_coordinator_version: 1`, the expected state directory and current work before using mutations. A configured file or a test client alone does not establish that an already-open chat has refreshed its tools. Historical Store fields such as `dispatch_available` describe the old direct interface; use the `operator` receipt for transport availability and the lifecycle state for execution eligibility. A running dashboard can retain its accepted 0.2.4 process identity while a new 0.2.5 coordinator reads the same ledger; compare ledger revision/digest separately from process code identity.
+After changing a project connection, refresh that MCP connection and verify tool discovery in the receiving chat. Confirm `mcp_coordinator_version: 2`, the expected state directory and current work before using mutations. A configured file or a test client alone does not establish that an already-open chat has refreshed its tools. Historical Store fields such as `dispatch_available` describe the old direct interface; use the `operator` receipt for transport availability and the lifecycle state for execution eligibility. A running dashboard can retain its accepted process identity while a newer coordinator reads the same ledger; compare ledger revision/digest separately from process code identity.
+
+### Wait for a saved decision
+
+AOS **0.2.6** adds a read-only wait to the trusted coordinator connection. Present the exact decision link, then call `wait_for_decision` with the `work_id`, `challenge_id` and `digest` returned by preparation. `timeout_seconds` is an integer from 0 to 30, default 30. Zero reads immediately. The existing HTTPS service remains the only answer route.
+
+The wait checks the existing ledger inside a single pending MCP request, with short asynchronous sleeps and no database transaction held between reads. It creates no notification ledger, background process or model-polling loop. Separate HTTPS and MCP processes can observe the same committed decision. Database lock waits are limited to 50 milliseconds per read; a missing/unreadable database or malformed saved response returns a reconciliation hold. Invalid request identities and unsafe state configuration remain rejected tool calls. A verified answer can return to the waiting chat without a manual “done” message while that request is open.
+
+| Result | Coordinator action |
+| --- | --- |
+| `decision_recorded` | Inspect the outcome. Read current work and use the existing guarded admission only if appropriate. Approval can still have prerequisite, pause, budget or runtime holds. |
+| `timeout` | End this wait and retain the same pending request. Do not cancel work, invent an answer or request another approval. A later explicit wait uses the same identities. Do not keep retrying indefinitely. |
+| `superseded` | The proposal or unanswered request became stale. Read current work; the old answer cannot authorize a newer proposal. |
+| `held` | Preserve the work control, terminal state or recovery-copy hold. |
+| `reconciliation_required` | A saved answer lacks verified readback, its receipt changed, or the ledger is unavailable. Reconcile the original decision through the existing recovery route; do not ask for approval again. |
+
+Disconnecting or cancelling the tool ends observation only. Reconnect and retry with the same identities to read the same decision. Two waiters may observe the same receipt; this is not exactly-once execution. Stable mutation operation IDs and transactional admission remain responsible for avoiding duplicate work. Worker audiences cannot call the wait tool.
+
+This feature returns to an **already pending tool call**. It does not wake an idle desktop chat, launch workers, or extend an approved deadline. Source/protocol tests do not qualify the desktop client's timeout or automatic model continuation. In the next trial chat, first verify the selected component candidate, coordinator interface 2, tool discovery and the intended ledger; then observe a real human decision while the wait is pending. An answer arriving after the wait ends remains durable but does not wake the chat. A desktop restart or shared-service replacement is not required by this change.
 
 ## Environment and authority
 
@@ -73,6 +92,44 @@ Commands emit JSON results. Exit 0 means the command completed, including replay
 Pause fences new dispatch. An already running assignment may complete; its result and pause survive worker restart. Resume rechecks existing authority and prerequisites. Cancel persists `cancel_requested`; the worker must subsequently reconcile its exact owned effects. Resources remain owned while effects are unknown. Stopping a foreground worker process does not cancel work or prove child cleanup. Terminal delivered/cancelled work cannot be resumed.
 
 After an approve, decline or cancel answer is saved, **Back to decisions** performs a same-tab GET of the current decision list/status. It does not resubmit the form. The outcome and exact saved identity stay visible on the result page; replaying the same answer reads that original decision.
+
+## Runtime readiness and operator helpers
+
+### Startup failure and instruction readiness
+
+Component **0.2.7** reconciles a matched `thread/start` rejection without inventing a model run. It preserves the original reservation and deadline, records the exact rejection, stops only the owned server, and verifies source/output inventories and child cleanup. Only this positive evidence yields `startup_failed`; EOF, contradictory replies, unknown owners, lingering effects and incomplete observations remain held. Restart, poll and cancel reuse the recorded attempt rather than launching a replacement. Historical uncertain attempts are not retrospectively cleared by this repair.
+
+Before preparing a model recipe, inspect the applicable instruction chain:
+
+```sh
+uv run aos instruction-manifest --source /absolute/project --support-file /absolute/required-policy
+```
+
+Bind the resulting object as `instruction_manifest` in the exact recipe. Discovery follows global instructions and the configured repository-root-to-working-directory chain, including override/fallback names and explicit supporting files. It pins bytes, aliases and discovery settings. Dispatch rejects missing instructions, drift, truncation and protected paths; configuration and credential directories remain denied. This is a manifest of required files, not permission to widen the approved recipe.
+
+The runtime performs actual startup readiness before `turn/start`. Its internal `start(assignment, preflight_only=True)` qualification path opens and cleans up one thread without a model turn; it still consumes the original reserved attempt and cannot be promoted or retried as product work. It is not a general worker mode or proof that a model followed the instructions.
+
+**Current host limitation:** the pinned runtime can read the installed global instruction target but refuses its symbolic-link entry under the restricted profile. The actual qualification failed before a model turn and remains a blocker for this installed layout (#59). No directory permission expansion, home-directory substitution or runtime upgrade is included. Static manifest tests do not qualify that native route.
+
+### Session recovery and decision briefs
+
+An expired browser session, missing cookie or invalid session token now explains how to recover and offers **Reopen the proposal and check its status**. The link performs a read-only GET. It preserves saved answers and never repeats the submitted choice; a pending proposal requires a fresh explicit answer. Host, origin, fetch-metadata and CSRF checks remain enforced. Actual rendered-browser recovery remains a qualification requirement (#50).
+
+Use the [decision brief](templates.md) when preparing a choice for the user. A new concept may include `decision_context` with six nonempty plain-text fields: `problem`, `example`, `effort`, `dependencies`, `evidence` and `stopping_point`, each at most 4,096 characters. Supply `recommendation`, `alternative` and `consequence` together. The full brief is bound into the package digest and rendered above the expandable technical record. Omitted context leaves historical packages unchanged. The fields do not enforce factual accuracy or readable language; representative decision-owner review remains necessary (#43).
+
+### Selected backlog reconciliation
+
+The bounded #34 helper reconciles one existing operational-table ID and its already mapped issue/project item. GitHub owns tracker status, urgency and importance; Markdown owns the maintained outcome and disposition. Neither side supplies AOS approval or delivery acceptance.
+
+```sh
+uv run aos backlog-preview --markdown futures.md --item B01 --direction github-to-markdown --project-owner OWNER --project-number 1 --intent /absolute/private/inbound.json
+uv run aos backlog-reconcile --intent /absolute/private/inbound.json --apply-local
+uv run aos backlog-preview --markdown futures.md --item B01 --direction markdown-to-github --project-owner OWNER --project-number 1 --intent /absolute/private/outbound.json
+```
+
+Inspect the retained preview before applying it. Local apply requires fresh matching issue/project and source observations; previews older than 15 minutes require a new preview. It changes only the selected row's managed tracker span and verifies the result. Repeated reconciliation of the same completed intent is read-only. Malformed markers, conflicting edits, duplicate identity and missing project coverage are held with failure history. The returned status names observation and last successful reconciliation times.
+
+Outbound reconciliation prepares a managed issue-body block without writing to GitHub. Review the entire public payload, then use the existing explicitly authorized issue-maintenance route and run `backlog-reconcile` without `--apply-local` to verify fresh remote readback. Pattern checks do not replace disclosure review. Unmanaged issue text remains intact. This helper does not create items, continuously synchronize, modify project fields or provide a cross-system transaction; the broader #34 remains open.
 
 ## Check adapters and allowances
 

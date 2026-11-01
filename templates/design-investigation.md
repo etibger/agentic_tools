@@ -7,6 +7,7 @@ Publish and read back this complete package before requesting approval and befor
 
 ## Decision summary
 Desired behavior, recommendation, alternatives, practical consequences and exact approval needed.
+Use the compact pattern in `decision-brief.md`: include observed problem, example, additional effort, dependency impact, evidence and stopping point. Distinguish estimates from caps and real observations from simulations. Keep material limits above technical details.
 
 ## Scope and requirements
 Before/after example; requirement IDs; exclusions; delivery/authority/platform boundaries.

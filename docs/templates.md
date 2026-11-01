@@ -9,6 +9,7 @@ Provide the completed shared contract alongside exactly one kickoff. See the [qu
 | Template | Purpose |
 | --- | --- |
 | [Shared work contract](downloads/work-contract.txt) | Scope, authority, assurance, decisions, evidence and handoff rules used by all three workflows |
+| [Decision brief](downloads/decision-brief.txt) | Explain a choice, practical example, effort, dependencies, evidence and stopping point while preserving the exact approval record |
 | [Bug-fix kickoff](downloads/bug-fix-kickoff.txt) | Reproduce, investigate, repair and verify a violation of intended behavior |
 | [Feature-change kickoff](downloads/feature-change-kickoff.txt) | Change an existing product through useful integrated increments |
 | [New-product kickoff](downloads/new-product-kickoff.txt) | Discover need and feasibility, then deliver a first usable slice through feature changes |
