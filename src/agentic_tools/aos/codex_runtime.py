@@ -30,11 +30,28 @@ from .store import Rejected, canonical, digest, identifier, now
 from .checks import adapter_for, bindings, passed as evidence_passed, validate_normalized
 from agentic_tools.check_adapters import identities as adapter_identities
 from . import budgets
+from . import instructions
 
 
 PIN = '0.163.0'
 PROFILE = 'aos-bounded'
 FEATURES = ('hooks', 'plugins', 'apps', 'multi_agent', 'remote_plugin', 'memories', 'remote_control')
+
+
+class RPCRejection(Rejected):
+    """A correlated JSON-RPC error, unlike EOF, timeout or malformed output."""
+
+    def __init__(self, method: str, request_id: str, code: int, message: str):
+        super().__init__('runtime_rpc_rejected', f'{method} rejected: {message[:500]}')
+        self.response = {'method': method, 'request_id': request_id, 'code': code,
+                         'message': message[:500], 'received_at': now()}
+
+
+def directory_identity(path: Path) -> dict:
+    info = path.lstat()
+    if path.is_symlink() or not stat.S_ISDIR(info.st_mode) or path.resolve() != path:
+        raise Rejected('runtime_scope', 'Exact real canonical directory required')
+    return {'device': info.st_dev, 'inode': info.st_ino, 'uid': info.st_uid}
 
 
 def clean_environment() -> dict[str, str]:
@@ -43,17 +60,25 @@ def clean_environment() -> dict[str, str]:
             'LANG': 'en_US.UTF-8', 'PYTHONDONTWRITEBYTECODE': '1'}
 
 
-def inventory(root: Path, *, allow_empty: bool = False) -> dict[str, str]:
+def inventory(root: Path, *, allow_empty: bool = False, check_deadline=None) -> dict[str, str]:
     """All regular source files, including new files; links/special files fail closed."""
     if root.is_symlink() or not root.is_dir():
         raise Rejected('source_scope', 'An existing real isolated source directory is required')
     result = {}
     for path in sorted(root.rglob('*')):
+        if check_deadline:
+            check_deadline()
         mode = path.lstat().st_mode
         if stat.S_ISLNK(mode) or not (stat.S_ISDIR(mode) or stat.S_ISREG(mode)):
             raise Rejected('source_scope', 'Source contains a link or special file')
         if stat.S_ISREG(mode):
-            result[str(path.relative_to(root))] = hashlib.sha256(path.read_bytes()).hexdigest()
+            checksum = hashlib.sha256()
+            with path.open('rb') as stream:
+                while chunk := stream.read(1024 * 1024):
+                    if check_deadline:
+                        check_deadline()
+                    checksum.update(chunk)
+            result[str(path.relative_to(root))] = checksum.hexdigest()
     if not result and not allow_empty:
         raise Rejected('source_scope', 'Empty source cannot identify a candidate')
     return result
@@ -128,7 +153,7 @@ class StdioRPC:
             self.closed = True
             with self.lock:
                 for waiter in self.waiters.values():
-                    waiter.put({'error': {'message': 'Runtime transport closed'}})
+                    waiter.put({'transport_closed': True})
 
     def request(self, method: str, params: dict | None = None) -> dict:
         request_id = str(uuid.uuid4())
@@ -138,8 +163,12 @@ class StdioRPC:
         try:
             self._send({'id': request_id, 'method': method, 'params': params or {}})
             message = waiter.get(timeout=self.timeout)
-            if 'error' in message or not isinstance(message.get('result'), dict):
-                detail = str(message.get('error', {}).get('message', 'unrecognized result'))[:500]
+            error = message.get('error')
+            if (message.get('id') == request_id and 'result' not in message and isinstance(error, dict)
+                    and type(error.get('code')) is int and isinstance(error.get('message'), str)):
+                raise RPCRejection(method, request_id, error['code'], error['message'])
+            if message.get('id') != request_id or 'error' in message or not isinstance(message.get('result'), dict):
+                detail = str(error.get('message', 'unrecognized result') if isinstance(error, dict) else 'unrecognized result')[:500]
                 raise Rejected('runtime_rpc', f'{method} failed: {detail}')
             return message['result']
         except queue.Empty as error:
@@ -162,20 +191,21 @@ class StdioRPC:
             except queue.Empty:
                 return events
 
-    def close(self):
+    def close(self, *, timeout: float = 4):
+        deadline = time.monotonic() + timeout
         if self.proc.poll() is None:
             self.proc.terminate()
             try:
-                self.proc.wait(timeout=2)
+                self.proc.wait(timeout=max(.001, min(2, deadline - time.monotonic())))
             except subprocess.TimeoutExpired:
                 self.proc.kill()
-                self.proc.wait(timeout=2)
+                self.proc.wait(timeout=max(.001, deadline - time.monotonic()))
         self.closed = True
 
 
-def processes() -> dict[int, tuple[int, str]]:
+def processes(*, timeout: float = 5) -> dict[int, tuple[int, str]]:
     reply = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,lstart='], capture_output=True,
-                           text=True, timeout=5, check=True, env=clean_environment())
+                           text=True, timeout=timeout, check=True, env=clean_environment())
     rows = {}
     for line in reply.stdout.splitlines():
         fields = line.split(None, 2)
@@ -184,10 +214,10 @@ def processes() -> dict[int, tuple[int, str]]:
     return rows
 
 
-def process_groups() -> dict[int, dict]:
+def process_groups(*, timeout: float = 5) -> dict[int, dict]:
     """Observe group membership as well as PID/start identity; never match names."""
     reply = subprocess.run(['/bin/ps', '-axo', 'pid=,ppid=,pgid=,lstart='], capture_output=True,
-                           text=True, timeout=5, check=True, env=clean_environment())
+                           text=True, timeout=timeout, check=True, env=clean_environment())
     return {int(parts[0]): {'parent': int(parts[1]), 'group': int(parts[2]), 'started': parts[3].strip()}
             for line in reply.stdout.splitlines() if len(parts := line.split(None, 3)) == 4}
 
@@ -332,6 +362,7 @@ class CodexRuntime:
             if not isinstance(interpreter, str) or not Path(interpreter).is_absolute() or not Path(interpreter).is_file():
                 raise Rejected('runtime_recipe', 'Typed checks require an explicit existing permission-probe interpreter')
         self._bindings(assignment, recipe)
+        instructions.validate(recipe.get('instruction_manifest'), source, self.directory.resolve())
         for key in ('implementation_prompt', 'assessment_prompt'):
             if not isinstance(recipe.get(key), str) or not recipe[key].strip():
                 raise Rejected('runtime_recipe', 'Bounded prompts required')
@@ -354,6 +385,11 @@ class CodexRuntime:
         profile = {'filesystem': filesystem, 'network': {'enabled': False}}
         shell_set = {'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'PYTHONDONTWRITEBYTECODE': '1'}
         entries = ','.join(f'{json.dumps(k)}={json.dumps(v)}' for k, v in filesystem.items())
+        if recipe.get('instruction_manifest'):
+            for path in instructions.validate(recipe['instruction_manifest'], Path(recipe['source']), self.directory.resolve()):
+                filesystem[path] = 'read'
+            profile['filesystem'] = filesystem
+            entries = ','.join(json.dumps(k) + '=' + json.dumps(v) for k, v in filesystem.items())
         overrides = ['approval_policy="never"', 'web_search="disabled"', f'default_permissions="{PROFILE}"',
                      'shell_environment_policy.inherit="none"',
                      'shell_environment_policy.set={PATH="/usr/bin:/bin:/usr/sbin:/sbin",PYTHONDONTWRITEBYTECODE="1"}',
@@ -372,6 +408,16 @@ class CodexRuntime:
                         # dotted path syntax cannot safely address a dotted key.
                         if any(char in name for char in '.\"\n\r='):
                             raise Rejected('runtime_config_key', 'Inherited integration key cannot be safely overridden by the pinned CLI')
+                        if table == 'mcp_servers':
+                            # An untrusted nested root can omit inherited server
+                            # definitions before applying CLI overrides. Supply a
+                            # valid, inert transport with the disabled flag so
+                            # we never create an invalid enabled-only table.
+                            transport = config[table][name]
+                            if bool(transport.get('command')) == bool(transport.get('url')):
+                                raise Rejected('runtime_config_key', 'Inherited server transport is ambiguous')
+                            key, value = ('command', '/usr/bin/false') if transport.get('command') else ('url', 'https://127.0.0.1:1/disabled')
+                            overrides.append(f'{table}.{name}.{key}=' + json.dumps(value))
                         overrides.append(f'{table}.{name}.enabled=false')
                 # CLI table overrides merge with configured shell values. Blank
                 # every inherited explicit value as well as disabling inheritance.
@@ -410,32 +456,50 @@ class CodexRuntime:
         aid = record['attempt_id']
         if aid in self.clients and not self.clients[aid].closed:
             return self.clients[aid]
-        rows = processes()
+        starting = record.get('startup_version') and not record.get('thread_id')
+        query_timeout = lambda: min(5, self._startup_remaining(record)) if starting else 5
+        rows = processes(timeout=query_timeout())
         for owner in record.get('server_history', []):
             if owner['pid'] in rows and rows[owner['pid']][1] == owner['started']:
                 raise Rejected('runtime_owner_unavailable', 'Saved app-server is alive without its control transport; ownership remains held')
         if version('openai-codex') != PIN or version('openai-codex-cli-bin') != PIN:
             raise Rejected('runtime_version', 'Pinned SDK and bundled runtime must both be 0.163.0')
         binary = bundled_codex_path()
+        timeout = min(10, self._startup_remaining(record)) if record.get('startup_version') and not record.get('thread_id') else 10
         runtime_version = subprocess.run([str(binary), '--version'], capture_output=True, text=True,
-                                         timeout=10, check=True, env=clean_environment()).stdout.strip()
+                                         timeout=timeout, check=True, env=clean_environment()).stdout.strip()
         if runtime_version != 'codex-cli ' + PIN:
             raise Rejected('runtime_version', 'Bundled CLI version mismatch')
         scoped = {**recipe, 'outputs': record['run_outputs']}
         overrides, profile = self._profile(scoped, record['assignment']['kind'] == 'assessment')
+        if record.get('startup_version') and not record.get('thread_id'):
+            self._startup_remaining(record)
+            record['server_launch'] = 'intent'
+            self._save(record)
         client = self.factory(binary, overrides, Path(recipe['source']))
+        self.clients[aid] = client  # Retain the handle even if identity observation fails.
         try:
-            row = processes().get(client.proc.pid)
+            row = processes(timeout=query_timeout()).get(client.proc.pid)
             if row:
-                record.setdefault('server_history', []).append({'pid': client.proc.pid, 'started': row[1]})
+                group = process_groups(timeout=query_timeout()).get(client.proc.pid, {})
+                record.setdefault('server_history', []).append({'pid': client.proc.pid, 'started': row[1],
+                                                                'group': group.get('group')})
             elif self.factory is StdioRPC:
                 raise Rejected('runtime_processes', 'Cannot establish spawned app-server OS identity')
             self._save(record)
+            self._watch(aid, client)
+            if record.get('startup_version') and not record.get('thread_id'):
+                client.timeout = min(15, self._startup_remaining(record))
             client.initialize()
+            if record.get('startup_version') and not record.get('thread_id'):
+                client.timeout = min(15, self._startup_remaining(record))
             config = client.request('config/read', {'cwd': recipe['source'], 'includeLayers': False})['config']
             self._verify_config(config, profile)
+            if recipe.get('instruction_manifest'):
+                instructions.verify_settings(recipe['instruction_manifest'], config)
         except Exception:
-            client.close()
+            if not record.get('startup_version') or record.get('thread_id'):
+                client.close()
             raise
         self.clients[aid] = client
         record.update(runtime_version=runtime_version, effective_permissions=profile, configuration_verified_at=now())
@@ -444,16 +508,156 @@ class CodexRuntime:
             record['sandbox_probe'] = self._probe_sandbox(record, scoped)
             self._save(record)
         except Exception:
-            client.close()
+            if not record.get('startup_version') or record.get('thread_id'):
+                client.close()
             raise
-        self._watch(aid, client)
         return client
+
+    @staticmethod
+    def _startup_remaining(record: dict, *, cleanup: bool = False) -> float:
+        remaining = min((datetime.fromisoformat(record['startup_deadline']) - datetime.now(timezone.utc)).total_seconds(),
+                        record['startup_deadline_monotonic'] - time.monotonic())
+        if not cleanup:
+            remaining -= record.get('startup_cleanup_reserve', 0)
+        if remaining <= 0 or time.monotonic() < record['startup_monotonic']:
+            raise Rejected('assignment_deadline', 'The original startup/assignment deadline has expired')
+        return remaining
+
+    @staticmethod
+    def _startup_proven(record: dict) -> bool:
+        proof = record.get('startup_outcome', {})
+        qualified = (record.get('startup_qualification_only') is True
+                     and proof.get('kind') == 'created_no_turn'
+                     and isinstance(record.get('thread_id'), str) and bool(record['thread_id'])
+                     and proof.get('thread_id') == record['thread_id'])
+        return (record.get('startup_version') == 1 and record.get('model_calls_attempted') == 0
+                and not record.get('turn_id')
+                and proof.get('attempt_id') == record['attempt_id']
+                and (qualified or not record.get('thread_id') and (proof.get('kind') == 'before_thread_request'
+                     or (proof.get('kind') == 'rejected' and proof.get('method') == 'thread/start'
+                         and isinstance(proof.get('request_id'), str) and bool(proof['request_id'])
+                         and type(proof.get('code')) is int))))
+
+    def _startup_stop(self, record: dict, recipe: dict) -> dict:
+        """Reconcile the original startup owner; never create a replacement client.
+
+        Legacy or ambiguous attempts remain held even if stopping their known
+        server succeeds. A missing ID or process alone is never a clean receipt.
+        """
+        unknown = {'attempt_id': record['attempt_id'], 'stopped': False, 'owned_processes': None,
+                   'effects_reconciled': False, 'partial_mutations': 'unknown'}
+        if digest(recipe) != record['recipe_digest'] or not record.get('startup_paths'):
+            return unknown
+        historical = record.get('terminal_observation', {}).get('state') in ('startup_failed', 'startup_qualified')
+        readback_deadline = time.monotonic() + 5
+        def remaining():
+            if not historical:
+                return self._startup_remaining(record, cleanup=True)
+            # A bounded read-only check of completed cleanup is not a new job
+            # or an extension of its expired execution allowance.
+            left = readback_deadline - time.monotonic()
+            if left <= 0:
+                raise Rejected('runtime_readback', 'Terminal readback exceeded its observation bound')
+            return left
+        remaining()
+        for name, identity in record['startup_paths'].items():
+            if directory_identity(Path(name)) != identity:
+                return {**unknown, 'detail': 'Startup directory identity changed'}
+        owners = record.get('server_history', [])
+        if not owners:
+            if record.get('server_launch') != 'not_started' or not self._startup_proven(record):
+                return unknown
+        elif len(owners) != 1 or owners[0].get('group') != owners[0]['pid']:
+            return unknown
+        rows = process_groups(timeout=min(5, remaining()))
+        observed = dict(record.get('startup_observed_processes', {}))
+        with self._db() as db:
+            observed.update(dict(db.execute('SELECT pid,started FROM observed_process WHERE attempt_id=?',
+                                            (record['attempt_id'],))))
+        client = self.clients.get(record['attempt_id'])
+        for owner in owners:
+            pid = owner['pid']
+            if pid in rows and rows[pid]['started'].strip() != owner['started'].strip():
+                return {**unknown, 'detail': 'Startup owner PID was reused'}
+            observed[str(pid)] = owner['started']
+            members = {pid}
+            while True:
+                more = {p for p, row in rows.items() if row['parent'] in members or row['group'] == owner['group']}
+                if more.issubset(members):
+                    break
+                members.update(more)
+            observed.update({str(p): rows[p]['started'] for p in members if p in rows})
+            record['startup_observed_processes'] = observed
+            self._save(record)
+            if pid in rows:
+                if historical:
+                    return {**unknown, 'detail': 'Live owner contradicts recorded terminal cleanup'}
+                if not client or client.proc.pid != pid or client.closed:
+                    return {**unknown, 'detail': 'Live startup owner has no control transport'}
+                client.close(timeout=min(4, remaining()))
+                if client.proc.poll() is None:
+                    return unknown
+                record['startup_owner_exit'] = {'pid': pid, 'started': owner['started'], 'observed_at': now()}
+                self._save(record)
+            elif record.get('startup_owner_exit', {}).get('started') != owner['started']:
+                return {**unknown, 'detail': 'No positive startup-owner exit observation'}
+        if record['attempt_id'] in self._monitors:
+            stop, monitor = self._monitors[record['attempt_id']]
+            stop.set()
+            observed.update(monitor)
+        record['startup_observed_processes'] = observed
+        self._save(record)
+        final = process_groups(timeout=min(5, remaining()))
+        settle = time.monotonic() + min(3, max(0, remaining() - .1))
+        while (not historical and time.monotonic() < settle
+               and any(pid != 'unavailable' and int(pid) in final for pid in observed)):
+            time.sleep(min(.05, remaining()))
+            final = process_groups(timeout=min(5, remaining()))
+        uncertain = [pid for pid in observed if pid == 'unavailable' or int(pid) in final]
+        unexpected = [str(pid) for pid, row in final.items() if any(row['group'] == o['group'] for o in owners)]
+        source_after = inventory(Path(recipe['source']), check_deadline=remaining)
+        output_after = inventory(Path(record['run_outputs']), allow_empty=True, check_deadline=remaining)
+        if any(directory_identity(Path(name)) != identity for name, identity in record['startup_paths'].items()):
+            return {**unknown, 'detail': 'Startup directory identity changed during reconciliation'}
+        effects = changed(record['baseline'], source_after)
+        output_effects = changed(record['startup_outputs'], output_after)
+        remaining()
+        safe = (self._startup_proven(record) and not uncertain and not unexpected
+                and not effects['changes'] and not output_effects['changes'])
+        if historical and safe:
+            return record['startup_stop_receipt']
+        result = {'attempt_id': record['attempt_id'], 'stopped': not uncertain and not unexpected,
+                  'owned_processes': sorted(set(uncertain + unexpected)), 'effects_reconciled': safe,
+                  'partial_mutations': effects, 'output_mutations': output_effects,
+                  'startup_outcome': record.get('startup_outcome'), 'observed_at': now()}
+        record['startup_stop_receipt'] = result
+        self._save(record)
+        return result
+
+    def _startup_failure(self, record: dict) -> dict:
+        try:
+            stop = self._startup_stop(record, self.recipes[record['assignment']['work_id']])
+            if not stop['effects_reconciled']:
+                return self._observation(record, 'unknown')
+            if record.get('terminal_observation'):
+                return record['terminal_observation']
+            qualified = record.get('startup_outcome', {}).get('kind') == 'created_no_turn'
+            observation = self._observation(record, 'startup_qualified' if qualified else 'startup_failed')
+            observation.update(receipt_id='startup-' + record['attempt_id'],
+                               result={'status': 'qualified' if qualified else 'failed', 'executor': record['assignment']['executor'],
+                                       'error': record.get('error'), **stop})
+            record.update(phase='startup_terminal', terminal_observation=observation)
+            self._save(record)
+            return observation
+        except (Rejected, OSError, sqlite3.Error, KeyError, ValueError, subprocess.SubprocessError) as error:
+            self._remember_error(record, error, 'startup_reconciliation')
+            return self._observation(record, 'unknown')
 
     def _probe_sandbox(self, record: dict, recipe: dict) -> dict:
         """Exercise the effective OS boundary before any model turn is sent."""
         assessment = record['assignment']['kind'] == 'assessment'
         overrides, _ = self._profile(recipe, assessment)
-        code = '''import json,os,socket,sys
+        code = '''import hashlib,json,os,socket,sys
 from pathlib import Path
 source,outputs,state,credentials=map(Path,sys.argv[1:5])
 reviewer=sys.argv[5]=='assessment'
@@ -464,7 +668,12 @@ def denied(key,action):
 denied('state_read_denied',lambda:(state/'codex-runtime.sqlite3').open('rb'))
 denied('state_write_denied',lambda:(state/'worker-forbidden-canary').open('w'))
 denied('credentials_denied',lambda:list(credentials.iterdir()))
+denied('credential_config_denied',lambda:os.close(os.open(credentials/'config.toml',os.O_RDONLY)))
 denied('immutable_write_denied',lambda:os.close(os.open(sys.argv[7],os.O_WRONLY)))
+for index,item in enumerate(json.loads(sys.argv[8])):
+ path=Path(item['path'])
+ answer['instruction_read_'+str(index)]=hashlib.sha256(path.read_bytes()).hexdigest()==item['sha256']
+ denied('instruction_write_denied_'+str(index),lambda path=path:os.close(os.open(path,os.O_WRONLY)))
 p=outputs/('probe-'+sys.argv[6]+'.txt')
 with p.open('x') as f:f.write('bounded permission probe')
 answer['output_write']=p.read_text()=='bounded permission probe'
@@ -485,11 +694,17 @@ raise SystemExit(0 if all(answer.values()) else 1)
                      recipe.get('probe_interpreter', recipe['checks'][0]['argv'][0]), '-c', code, recipe['source'], recipe['outputs'],
                      str(self.directory.resolve()), str(Path.home() / '.codex'),
                      record['assignment']['kind'], record['attempt_id'],
-                     str(self._source_path(recipe, next(iter(recipe['immutable']))))])
-        run = subprocess.run(args, capture_output=True, text=True, env=clean_environment(), timeout=15)
+                     str(self._source_path(recipe, next(iter(recipe['immutable'])))),
+                     json.dumps(recipe.get('instruction_manifest', {}).get('chain', []) +
+                                recipe.get('instruction_manifest', {}).get('support', []))])
+        timeout = min(15, self._startup_remaining(record)) if record.get('startup_version') and not record.get('thread_id') else 15
+        run = subprocess.run(args, capture_output=True, text=True, env=clean_environment(), timeout=timeout)
         try:
             answer = json.loads(run.stdout)
         except ValueError as error:
+            record['sandbox_probe_failure'] = {'exit_code': run.returncode, 'stderr': run.stderr[-2000:],
+                                               'stdout_sha256': hashlib.sha256(run.stdout.encode()).hexdigest()}
+            self._save(record)
             raise Rejected('runtime_sandbox', 'OS permission probe returned no recognized evidence') from error
         if run.returncode != 0 or not answer or not all(value is True for value in answer.values()):
             raise Rejected('runtime_sandbox', 'OS permission probe did not demonstrate required denials/access')
@@ -518,7 +733,7 @@ raise SystemExit(0 if all(answer.values()) else 1)
                 stop.wait(.1)
         threading.Thread(target=watch, daemon=True).start()
 
-    def start(self, assignment: dict) -> dict:
+    def start(self, assignment: dict, *, preflight_only: bool = False) -> dict:
         aid = assignment['attempt_id']
         identifier(aid)
         prior_record = self._get(aid)
@@ -540,6 +755,13 @@ raise SystemExit(0 if all(answer.values()) else 1)
                           'usage_raw': [], 'usage': None, 'observed_processes': {}, 'model_calls_attempted': 0,
                           'budget_id': budget['budget_id'], 'budget_seconds': recipe['max_seconds'],
                           'run_outputs': str(Path(recipe['outputs']) / aid)}
+                started = time.monotonic()
+                deadline = datetime.fromisoformat(assignment.get('sent_at') or record['created_at']) + timedelta(seconds=recipe['max_seconds'])
+                record.update(startup_version=1, server_launch='not_started', startup_monotonic=started,
+                              startup_qualification_only=preflight_only,
+                              startup_cleanup_reserve=min(5, recipe['max_seconds'] / 5),
+                              startup_deadline_monotonic=started + max(0, (deadline - datetime.now(timezone.utc)).total_seconds()),
+                              startup_deadline=deadline.isoformat())
                 record['check_adapters'] = self._bindings(assignment, recipe)
                 if assignment['kind'] == 'assessment' and candidate(Path(recipe['source'])) != json.loads(assignment['candidate']):
                     raise Rejected('source_drift', 'Assessment source differs from its frozen candidate')
@@ -548,10 +770,15 @@ raise SystemExit(0 if all(answer.values()) else 1)
             return self.lookup(aid)
         try:
             Path(record['run_outputs']).mkdir(mode=0o700, exist_ok=False)
+            record['startup_paths'] = {path: directory_identity(Path(path))
+                                       for path in (recipe['source'], record['run_outputs'])}
+            record['startup_outputs'] = inventory(Path(record['run_outputs']), allow_empty=True)
+            self._save(record)
             client = self._client(record, recipe)
             record['phase'] = 'thread_request'
             self._save(record)
             self._fault('before_thread_request')
+            client.timeout = min(15, self._startup_remaining(record))
             reply = client.request('thread/start', {'model': assignment['requested_model'], 'cwd': recipe['source'],
                                    'approvalPolicy': 'never', 'approvalsReviewer': 'user',
                                    'config': {'model_reasoning_effort': assignment['requested_effort']}})
@@ -560,14 +787,25 @@ raise SystemExit(0 if all(answer.values()) else 1)
             if (record['model'] != assignment['requested_model'] or record['effort'] != assignment['requested_effort']
                     or reply.get('approvalPolicy') != 'never' or reply.get('cwd') != recipe['source']):
                 raise Rejected('runtime_configuration', 'Observed thread configuration is outside the approved envelope')
+            instructions.validate(recipe['instruction_manifest'], Path(recipe['source']), self.directory.resolve())
+            record['instruction_qualification'] = {'thread_id': record['thread_id'], 'observed_at': now(),
+                                                   'manifest_digest': digest(recipe['instruction_manifest']),
+                                                   'model_turn_started': False}
+            self._save(record)
+            if preflight_only:
+                record['startup_outcome'] = {'kind': 'created_no_turn', 'attempt_id': aid,
+                                             'thread_id': record['thread_id'], 'observed_at': now()}
+                self._save(record)
+                return self._startup_failure(record)
             record.update(phase='turn_request', model_calls_attempted=1)
             self._save(record)  # No retry is permitted beyond this durable boundary.
             self.model_calls += 1
-            timer = threading.Timer(recipe['max_seconds'], self.cancel, args=(aid,))
+            timer = threading.Timer(self._startup_remaining(record), self.cancel, args=(aid,))
             timer.daemon = True
             self._timers[aid] = timer
             timer.start()
             self._fault('before_turn_request')
+            client.timeout = min(15, self._startup_remaining(record))
             text = recipe['assessment_prompt' if assignment['kind'] == 'assessment' else 'implementation_prompt']
             text = text.replace(recipe['outputs'], record['run_outputs'])
             text += '\nAttempt: ' + aid
@@ -584,7 +822,14 @@ raise SystemExit(0 if all(answer.values()) else 1)
             return self._observation(record, 'active')
         except Exception as error:
             record['error'] = type(error).__name__ + ': ' + str(error)
+            if (isinstance(error, RPCRejection) and error.response['method'] == 'thread/start'
+                    and record['phase'] == 'thread_request' and record['model_calls_attempted'] == 0):
+                record['startup_outcome'] = {'kind': 'rejected', 'attempt_id': aid, **error.response}
+            elif record['phase'] == 'intent' and record.get('startup_version') == 1:
+                record['startup_outcome'] = {'kind': 'before_thread_request', 'attempt_id': aid, 'observed_at': now()}
             self._save(record)
+            if record.get('startup_outcome'):
+                return self._startup_failure(record)
             return self._observation(record, 'unknown')
 
     @staticmethod
@@ -598,6 +843,8 @@ raise SystemExit(0 if all(answer.values()) else 1)
         record = self._get(attempt_id)
         if record is None:
             return {'state': 'absent', 'definitive': True, 'attempt_id': attempt_id}
+        if record.get('startup_outcome'):
+            return self._startup_failure(record)
         if record.get('terminal_observation'):
             return self._cached_terminal(record)
         if not record.get('thread_id') or record['phase'] not in ('turn_request', 'running', 'checking'):
@@ -665,12 +912,16 @@ raise SystemExit(0 if all(answer.values()) else 1)
         This is a read retry, never permission to repeat Start. The original
         assignment clock also applies after a worker/transport reconnect.
         """
-        if (getattr(error, 'code', None) != 'runtime_rpc' or not record.get('turn_id')
+        if (not record.get('turn_id')
                 or record['phase'] != 'running' or record.get('status_readable_at')):
             return False
-        prefix = ('runtime_rpc: thread/read failed: failed to read thread: thread-store internal error: '
-                  'failed to read session metadata ')
-        message = str(error)
+        if isinstance(error, RPCRejection) and error.response['method'] == 'thread/read':
+            message = error.response['message']
+        elif getattr(error, 'code', None) == 'runtime_rpc':
+            message = str(error).removeprefix('runtime_rpc: thread/read failed: ')
+        else:
+            return False
+        prefix = 'failed to read thread: thread-store internal error: failed to read session metadata '
         if not message.startswith(prefix):
             return False
         path, separator, suffix = message[len(prefix):].partition(': rollout at ')
@@ -718,6 +969,8 @@ raise SystemExit(0 if all(answer.values()) else 1)
         record = self._get(attempt_id)
         if not record:
             return {'state': 'absent', 'definitive': True, 'attempt_id': attempt_id}
+        if record.get('startup_outcome'):
+            return self._startup_failure(record)
         if record.get('terminal_observation'):
             return self._cached_terminal(record)
         try:
@@ -1132,8 +1385,9 @@ raise SystemExit(0 if all(answer.values()) else 1)
                 if (not record.get('model_stop_receipt') or
                         checks and {c.get('native_check_id') for c in checks} != {r['check_id'] for r in rows}):
                     return unknown  # Old pre-repair stop evidence cannot prove native cleanup.
-            if not record.get('thread_id'):
-                return unknown
+            if not record.get('thread_id') or record.get('startup_qualification_only'):
+                recipe = self.recipes[record['assignment']['work_id']]
+                return self._startup_stop(record, recipe)
             recipe = self.recipes[record['assignment']['work_id']]
             if digest(recipe) != record['recipe_digest']:
                 return unknown

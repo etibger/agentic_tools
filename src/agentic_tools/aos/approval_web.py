@@ -21,7 +21,7 @@ from threading import Lock
 from urllib.parse import parse_qs, urlsplit, urlencode
 from pathlib import Path
 
-from .store import Rejected, Store, canonical
+from .store import DECISION_CONTEXT_LABELS, Rejected, Store, canonical
 
 
 
@@ -104,6 +104,18 @@ def handler_for(controller: DecisionController) -> type[BaseHTTPRequestHandler]:
         def reject(self, status: HTTPStatus) -> None:
             self.response(status, document("<h1>Decision unavailable</h1><p>This submission made no new decision. Saved decisions remain recorded. Return to the AOS dashboard for the current status.</p>"))
 
+        def recover_session(self, challenge_id: str) -> None:
+            current = controller.current(challenge_id)
+            route = '/?' + urlencode({'challenge': challenge_id}) if current else '/'
+            self.response(HTTPStatus.FORBIDDEN, document(
+                '<h1>Browser session unavailable</h1>'
+                '<p>This tab no longer has valid session credentials. This can happen after the decision service restarts.</p>'
+                '<p>This submission made no new decision. Any previously saved answer remains recorded.</p>'
+                '<p><a href="' + escape(route) + '">Reopen the proposal and check its status</a></p>'
+                '<p>Opening that link only reads the current status and refreshes the browser session. '
+                'If the proposal still needs an answer, review it and choose an answer explicitly. '
+                'A changed proposal will show its current scope.</p>'))
+
         def valid_host(self) -> bool:
             return self.headers.get("Host") == controller.origin.removeprefix("https://")
 
@@ -159,12 +171,16 @@ def handler_for(controller: DecisionController) -> type[BaseHTTPRequestHandler]:
                 + ". " + escape(str(member["scope"])) + "</li>"
                 for member in package["team_envelope"]
             )
+            context = package.get("decision_context", {})
+            brief = "".join(f"<p><strong>{label}:</strong> {escape(context[key])}</p>"
+                            for key, label in DECISION_CONTEXT_LABELS.items() if key in context)
             body = f"""<h1>Needs your decision</h1><p class="note">Review this proposal before choosing. Closing this tab leaves work held.</p>
 <section><small>Proposal revision {package['revision']}</small>
 <h2>{escape(package['body'])}</h2>
 <p><strong>Recommendation:</strong> {escape(package.get('recommendation', 'Approve only if the complete package matches your intent.'))}</p>
 <p><strong>Alternative:</strong> {escape(package.get('alternative', 'Decline or cancel; work stays held.'))}</p>
 <p><strong>Consequence:</strong> {escape(package.get('consequence', 'Approval records this exact concept; implementation dispatch remains gated.'))}</p>
+{brief}
 <h3>What this approval covers</h3><ul>{acceptance}</ul>
 <p><strong>Authority:</strong> {escape(package['authority'])}</p>
 <h3>Team and limits</h3><ul>{team}</ul>
@@ -202,13 +218,15 @@ SHA-256: {escape(current['digest'])}</small></p>
                 cookie.load(self.headers.get("Cookie", ""))
                 token = cookie.get("aos_decision")
                 values = {key: items[0] for key, items in form.items() if len(items) == 1}
-                if (set(values) != {"challenge", "csrf", "choice"} or values["choice"] not in {"approve", "decline", "cancel"}
-                        or not token):
+                if (set(values) != {"challenge", "csrf", "choice"} or values["choice"] not in {"approve", "decline", "cancel"}):
                     self.reject(HTTPStatus.FORBIDDEN)
+                    return
+                if not token:
+                    self.recover_session(values['challenge'])
                     return
                 session_use = controller.use_session(token.value, values["challenge"], values["csrf"], values["choice"])
                 if session_use == "invalid":
-                    self.reject(HTTPStatus.FORBIDDEN)
+                    self.recover_session(values['challenge'])
                     return
                 if session_use == "stale":
                     self.response(HTTPStatus.CONFLICT, document('<h1>Decision held</h1>'

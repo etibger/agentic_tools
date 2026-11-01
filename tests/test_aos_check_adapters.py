@@ -22,6 +22,7 @@ from test_aos_store import TEAM
 
 
 def prepared_checks(tmp_path, monkeypatch, *, delegated=False, product=None, recipe_update=None):
+    from agentic_tools.aos.instructions import discover
     source, outputs = tmp_path / 'source', tmp_path / 'outputs'
     source.mkdir()
     outputs.mkdir()
@@ -38,6 +39,7 @@ def prepared_checks(tmp_path, monkeypatch, *, delegated=False, product=None, rec
                          {'name': 'fixture', 'result_kind': 'pytest',
                           'argv': [sys.executable, '-m', 'pytest', '-q', '-c', 'pytest.ini', '--rootdir=.', 'test_example.py'],
                           'scope': 'synthetic tests', 'timeout_seconds': 10}]}
+    recipe['instruction_manifest'] = discover(source)
     if recipe_update:
         recipe_update(recipe)
     store = Store(tmp_path / 'state', (source, outputs))

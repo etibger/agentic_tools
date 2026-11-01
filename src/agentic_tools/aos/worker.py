@@ -165,6 +165,25 @@ class Worker:
     def _consume(self, assignment: dict, observation: dict) -> None:
         self.lifecycle.observe_runtime(assignment, observation)
         state = observation.get('state')
+        if state == 'startup_failed':
+            result = observation.get('result', {})
+            proof = result.get('startup_outcome', {})
+            if (observation.get('attempt_id') != assignment['attempt_id']
+                    or observation.get('model_calls_attempted') != 0
+                    or observation.get('thread_id') or observation.get('turn_id')
+                    or proof.get('attempt_id') != assignment['attempt_id']
+                    or proof.get('kind') not in ('rejected', 'before_thread_request')
+                    or (proof.get('kind') == 'rejected' and
+                        (proof.get('method') != 'thread/start' or not isinstance(proof.get('request_id'), str)
+                         or not proof['request_id'] or type(proof.get('code')) is not int))
+                    or result.get('status') != 'failed' or not result.get('stopped')
+                    or result.get('owned_processes') != [] or result.get('effects_reconciled') is not True):
+                self.lifecycle.unknown(assignment['assignment_id'], 'Startup failure lacks authoritative rejection and cleanup evidence')
+                return
+            # A rejected startup has no effective model/effort to acknowledge.
+            # The existing failure path preserves its reservation and holds work.
+            self.lifecycle.complete(observation['receipt_id'], assignment['assignment_id'], result)
+            return
         if state in ('active', 'waiting', 'completed', 'failed'):
             if state == 'waiting':
                 waiting = observation.get('status_wait', {})

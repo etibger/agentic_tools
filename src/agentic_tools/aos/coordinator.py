@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from . import version_receipt
 from .interface import TeamMember
@@ -52,6 +52,23 @@ class IntroductionRequest(BaseModel):
     team: list[TeamMember] = Field(min_length=1)
 
 
+class DecisionContext(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    problem: str = Field(min_length=1, max_length=4096)
+    example: str = Field(min_length=1, max_length=4096)
+    effort: str = Field(min_length=1, max_length=4096)
+    dependencies: str = Field(min_length=1, max_length=4096)
+    evidence: str = Field(min_length=1, max_length=4096)
+    stopping_point: str = Field(min_length=1, max_length=4096)
+
+    @field_validator("*")
+    @classmethod
+    def nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Brief fields must not be blank")
+        return value
+
+
 class ConceptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     operation_id: str
@@ -66,6 +83,7 @@ class ConceptRequest(BaseModel):
     recommendation: str | None = None
     alternative: str | None = None
     consequence: str | None = None
+    decision_context: DecisionContext | None = None
     execution_envelope: ExecutionEnvelope
 
 
@@ -158,7 +176,8 @@ def capabilities() -> dict:
             "coordinator_commands": ["introduce-work", "present-concept", "register-contract", "prepare-decision", "decide-serve",
                                      "admit", "status", "pause", "resume", "cancel", "worker", "version",
                                      "dashboard-serve", "dashboard-inspect", "dashboard-stop", "reconcile-prerequisites",
-                                     "backup-ledger", "restore-ledger", "serve-coordinator"],
+                                     "backup-ledger", "restore-ledger", "serve-coordinator",
+                                     "instruction-manifest", "backlog-preview", "backlog-reconcile"],
             "dashboard_service_version": 1,
             "workflow_control_transport": "trusted coordinator CLI and MCP using the same Store/Lifecycle; explicit Worker process",
             "coordinator_accepts_approval_answer": False, "mcp_workflow_control": True,

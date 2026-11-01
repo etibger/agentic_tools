@@ -19,6 +19,7 @@ from agentic_tools.aos.codex_runtime import (CodexRuntime, FEATURES, PROFILE, St
 from agentic_tools.aos.lifecycle import Lifecycle
 from agentic_tools.aos.store import Rejected, Store, canonical, digest
 from agentic_tools.aos.worker import Worker
+from agentic_tools.aos.instructions import discover
 from test_aos_lifecycle import contract
 from test_aos_store import TEAM
 
@@ -100,7 +101,7 @@ class ScriptedRPC:
         values, self.events = self.events, []
         return values
 
-    def close(self):
+    def close(self, **kwargs):
         self.closed = True
         self.proc.exited = True
 
@@ -139,6 +140,7 @@ def prepared(tmp_path, monkeypatch):
               'assessment_prompt': 'Review frozen source. Write review-<Attempt>.txt in outputs. No detached processes.',
               'checks': [{'name': 'fixture', 'argv': [sys.executable, '-m', 'pytest', '-q', 'test_example.py'],
                           'timeout_seconds': 10, 'scope': 'add behavior and fixture consumer'}]}
+    recipe['instruction_manifest'] = discover(source)
     store = Store(tmp_path / 'state', (source, outputs))
     store.introduce('intro', 'Q2', 'Scripted adapter boundary', ['fixture'], TEAM)
     bounds = contract({'digest': 'not-self-referential'})
@@ -162,7 +164,7 @@ def prepared(tmp_path, monkeypatch):
     lifecycle.admit('admit', 'Q2')
     backend = Backend()
     runtime = CodexRuntime(lifecycle, {'Q2': recipe}, transport_factory=backend.factory)
-    monkeypatch.setattr('agentic_tools.aos.codex_runtime.processes', lambda: {})
+    monkeypatch.setattr('agentic_tools.aos.codex_runtime.processes', lambda **kwargs: {})
     monkeypatch.setattr(runtime, '_watch', lambda *_args: None)
     monkeypatch.setattr(runtime, '_probe_sandbox', lambda *_args: {'SIMULATED': True})
     yield SimpleNamespace(source=source, outputs=outputs, store=store, lifecycle=lifecycle, recipe=recipe,
@@ -312,7 +314,7 @@ def test_surviving_process_identity_is_held(prepared, monkeypatch):
     record = p.runtime._get(assignment['attempt_id'])
     record['observed_processes'] = {'123': 'same-start'}
     p.runtime._save(record)
-    monkeypatch.setattr('agentic_tools.aos.codex_runtime.processes', lambda: {123: (1, 'same-start')})
+    monkeypatch.setattr('agentic_tools.aos.codex_runtime.processes', lambda **kwargs: {123: (1, 'same-start')})
     # Bound this negative test without waiting three seconds.
     ticks = iter([0, 4, 8])
     monkeypatch.setattr('agentic_tools.aos.codex_runtime.time.monotonic', lambda: next(ticks))
@@ -753,7 +755,7 @@ def test_live_saved_server_without_transport_holds_recovery(prepared, monkeypatc
     record['server_history'] = [{'pid': 1234, 'started': 'same-process'}]
     p.runtime._save(record)
     p.runtime.clients.clear()
-    monkeypatch.setattr('agentic_tools.aos.codex_runtime.processes', lambda: {1234: (1, 'same-process')})
+    monkeypatch.setattr('agentic_tools.aos.codex_runtime.processes', lambda **kwargs: {1234: (1, 'same-process')})
     result = p.runtime.poll(assignment['attempt_id'])
     assert result['state'] == 'unknown' and 'control transport' in result['detail']
     assert p.backend.count('turn/start') == 1

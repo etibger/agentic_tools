@@ -219,11 +219,12 @@ def create_server(store: Store, *, audience: Literal["host", "worker"] = "host",
                         package_id: str, revision: int, body: str, acceptance: list[str],
                         team_envelope: list[TeamMember], authority: str,
                         recommendation: str | None = None, alternative: str | None = None,
-                        consequence: str | None = None) -> dict[str, Any]:
+                        consequence: str | None = None, decision_context: dict[str, str] | None = None) -> dict[str, Any]:
         """Store a complete concept version and its canonical SHA-256 digest; revised concepts require fresh approval."""
         return store.present(operation_id, work_id, expected_work_revision, package_id, revision,
                              body, acceptance, [member.model_dump() for member in team_envelope], authority,
-                             recommendation=recommendation, alternative=alternative, consequence=consequence)
+                             recommendation=recommendation, alternative=alternative, consequence=consequence,
+                             decision_context=decision_context)
 
     @server.tool(annotations=mutate)
     async def request_concept_approval(operation_id: str, work_id: str, expected_work_revision: int,

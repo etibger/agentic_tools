@@ -20,6 +20,16 @@ from pathlib import Path
 from typing import Any, Iterator
 
 
+DECISION_CONTEXT_LABELS = {
+    "problem": "Observed problem",
+    "example": "Practical example",
+    "effort": "Additional effort and limits",
+    "dependencies": "Dependency impact",
+    "evidence": "Evidence needed",
+    "stopping_point": "Stopping point",
+}
+
+
 class Rejected(ValueError):
     def __init__(self, code: str, message: str):
         self.code = code
@@ -159,8 +169,8 @@ class Store:
                 source.backup(backup)
 
     @contextmanager
-    def _connection(self) -> Iterator[sqlite3.Connection]:
-        db = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True, timeout=5) if self.read_only else sqlite3.connect(self.path, timeout=5)
+    def _connection(self, *, timeout: float = 5) -> Iterator[sqlite3.Connection]:
+        db = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True, timeout=timeout) if self.read_only else sqlite3.connect(self.path, timeout=timeout)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
         try:
@@ -230,7 +240,8 @@ class Store:
                 package_id: str, revision: int, body: str, acceptance: list[str],
                 team_envelope: list[dict], authority: str, *,
                 recommendation: str | None = None, alternative: str | None = None,
-                consequence: str | None = None, execution_envelope: dict | None = None) -> dict:
+                consequence: str | None = None, execution_envelope: dict | None = None,
+                decision_context: dict | None = None) -> dict:
         identifier(package_id)
         if type(revision) is not int or revision < 1:
             raise Rejected("invalid_revision", "Concept revision must be a positive integer")
@@ -240,9 +251,16 @@ class Store:
                    "revision": revision, "body": body, "acceptance": acceptance,
                    "team_envelope": team_envelope, "authority": authority}
         if any(value is not None for value in (recommendation, alternative, consequence)):
-            if not all(value and value.strip() for value in (recommendation, alternative, consequence)):
+            if not all(isinstance(value, str) and value.strip() for value in (recommendation, alternative, consequence)):
                 raise Rejected("incomplete_decision_context", "Recommendation, alternative, and consequence are required together")
             package.update(recommendation=recommendation, alternative=alternative, consequence=consequence)
+        if decision_context is not None:
+            if (not isinstance(decision_context, dict) or set(decision_context) != set(DECISION_CONTEXT_LABELS)
+                    or not all(isinstance(value, str) and value.strip() and len(value) <= 4096
+                               for value in decision_context.values())
+                    or recommendation is None):
+                raise Rejected("incomplete_decision_context", "Provide all six brief fields (1–4096 characters each), recommendation, alternative, and consequence")
+            package["decision_context"] = decision_context
         if execution_envelope is not None:
             if not isinstance(execution_envelope, dict):
                 raise Rejected("invalid_execution_envelope", "Approved execution bounds must be an explicit object")

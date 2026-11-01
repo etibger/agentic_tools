@@ -84,6 +84,19 @@ def cli(tmp_path):
     return Coordinator(tmp_path)
 
 
+def test_complete_decision_brief_survives_coordinator_request(cli):
+    from test_aos_decision_brief import CONTEXT, CHOICE
+    _, request = cli.prepare()
+    request.update(operation_id="brief-revision", expected_work_revision=2, revision=2,
+                   decision_context=CONTEXT, **CHOICE)
+    # Contract registration is a lifecycle mutation, so use the observed work revision.
+    request["expected_work_revision"] = cli.status()["revision"]
+    current = cli.request("present-concept", request)
+    package = cli.status()["concepts"][-1]["package"]
+    assert package["decision_context"] == CONTEXT
+    assert current["digest"] == cli.status()["concepts"][-1]["digest"]
+
+
 @contextmanager
 def decision_page(cli):
     """Run the real CLI HTTPS route on a fresh owned socket and temporary key."""

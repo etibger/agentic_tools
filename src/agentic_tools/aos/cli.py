@@ -19,6 +19,19 @@ def main(argv: list[str] | None = None) -> int:
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("version", help="Read source identity and supported command capabilities; no state or model access")
     commands.add_parser("runtime-capabilities", help="Inspect pinned SDK/API and runtime version; no model invocation")
+    instruction_command = commands.add_parser('instruction-manifest', help='Inspect exact ordered instruction files and aliases; no runtime, permission or approval change')
+    instruction_command.add_argument('--source', type=Path, required=True)
+    instruction_command.add_argument('--support-file', type=Path, action='append', default=[])
+    backlog_preview = commands.add_parser('backlog-preview', help='Preview one mapped backlog row against its existing GitHub issue/project; no target writes')
+    backlog_preview.add_argument('--markdown', type=Path, required=True)
+    backlog_preview.add_argument('--item', required=True)
+    backlog_preview.add_argument('--direction', choices=('github-to-markdown', 'markdown-to-github'), required=True)
+    backlog_preview.add_argument('--project-owner', required=True)
+    backlog_preview.add_argument('--project-number', type=int, required=True)
+    backlog_preview.add_argument('--intent', type=Path, required=True)
+    backlog_reconcile = commands.add_parser('backlog-reconcile', help='Fresh readback of one retained preview; optionally apply its local Markdown update; never writes GitHub')
+    backlog_reconcile.add_argument('--intent', type=Path, required=True)
+    backlog_reconcile.add_argument('--apply-local', action='store_true')
     for name in ('archive-publish-local', 'archive-read-local'):
         command = commands.add_parser(name, help='Disposable local archive qualification only; no network publisher')
         command.add_argument('--journal', type=Path, required=True)
@@ -90,6 +103,20 @@ def main(argv: list[str] | None = None) -> int:
                                  help="Operator evidence reference; this label alone is not proof of human action")
     args = parser.parse_args(argv)
     try:
+        if args.command.startswith('backlog-'):
+            from .backlog import GitHubReader, prepare, preview, reconcile
+            if args.command == 'backlog-preview':
+                result = prepare(args.intent, preview(args.markdown, args.item, args.direction,
+                                 GitHubReader(args.project_owner, args.project_number)))
+            else:
+                retained = json.loads(args.intent.read_text())['plan']['snapshot']['project']
+                result = reconcile(args.intent, GitHubReader(retained['owner'], retained['number']), apply_local=args.apply_local)
+            print(json.dumps(result, indent=2))
+            return 0
+        if args.command == 'instruction-manifest':
+            from .instructions import discover
+            print(json.dumps(discover(args.source, support_files=args.support_file), indent=2))
+            return 0
         if args.command == "version":
             from .coordinator import capabilities
             print(json.dumps(capabilities(), indent=2))

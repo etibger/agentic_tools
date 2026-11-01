@@ -48,7 +48,7 @@ def test_protocol_authority_replay_and_existing_worker_handoff(tmp_path):
 
             tools = {t.name for t in (await client.list_tools()).tools}
             assert tools == {"interface_capabilities", "read_work", "read_service_status", "read_dashboard",
-                             "operation_schema", "coordinator_operation"}
+                             "operation_schema", "coordinator_operation", "wait_for_decision"}
             assert not {"finish_approval", "request_concept_approval", "run_worker"} & tools
             assert not (await client.call_tool("operation_schema", {"operation": "present-concept"})).isError
             first = await operation("introduce-work", intro)
@@ -128,7 +128,7 @@ def test_actual_stdio_connection_reads_same_state_after_reconnect(tmp_path):
                 async with ClientSession(reader, writer) as client:
                     await client.initialize()
                     caps = await client.call_tool("interface_capabilities", {})
-                    assert caps.structuredContent["mcp_coordinator_version"] == 1
+                    assert caps.structuredContent["mcp_coordinator_version"] == 2
                     assert caps.structuredContent["coordinator_accepts_approval_answer"] is False
                     read = await client.call_tool("read_work", {"work_id": "MCP"})
                     expected = store.read("MCP")

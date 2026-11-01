@@ -10,6 +10,7 @@ from threading import Thread
 import time
 import pytest
 from urllib.parse import urlencode
+from html import unescape
 
 from agentic_tools.aos.approval_web import DecisionController, handler_for
 from agentic_tools.aos.store import Store
@@ -105,6 +106,37 @@ def test_interrupted_page_session_can_reopen_without_approving(tmp_path):
         assert post(conn, cookie, challenge, csrf, "cancel", origin) == 200
         conn.close()
     assert store.read("WEB-TEST")["decisions"][0]["outcome"] == "cancelled"
+
+
+@pytest.mark.parametrize('credentials', ['old_server', 'missing_cookie', 'wrong_csrf'])
+def test_invalid_session_has_token_free_get_recovery(tmp_path, credentials):
+    store, current = fixture(tmp_path)
+    with running_page(store) as (port, origin):
+        conn, _, cookie, challenge, csrf = get_form(port)
+        conn.close()
+    with running_page(store) as (port, origin):
+        conn = HTTPConnection('127.0.0.1', port)
+        if credentials == 'wrong_csrf':
+            conn.close()
+            conn, _, cookie, challenge, csrf = get_form(port)
+        headers = {'Content-Type': 'application/x-www-form-urlencoded', 'Origin': origin, 'Sec-Fetch-Site': 'same-origin'}
+        if credentials != 'missing_cookie':
+            headers['Cookie'] = cookie
+        payload = urlencode({'challenge': challenge, 'csrf': 'wrong' if credentials == 'wrong_csrf' else csrf, 'choice': 'approve'})
+        conn.request('POST', '/decide', payload, headers)
+        response = conn.getresponse()
+        body = response.read().decode()
+        assert response.status == 403 and 'Browser session unavailable' in body
+        assert csrf not in body and cookie not in body and '<form' not in body
+        route = unescape(re.search(r'<a href="([^"]+)"', body).group(1))
+        assert route.startswith('/?challenge=')
+        conn.request('GET', route)
+        response = conn.getresponse()
+        fresh = response.read().decode()
+        assert response.status == 200 and current['digest'] in fresh
+        assert response.getheader('Set-Cookie').split(';', 1)[0] != cookie
+        assert not store.read('WEB-TEST')['decisions']
+        conn.close()
 
 
 @pytest.mark.parametrize('choice,outcome', [('approve', 'approved'), ('decline', 'declined'), ('cancel', 'cancelled')])

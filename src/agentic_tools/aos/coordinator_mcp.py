@@ -5,17 +5,18 @@ is introduced here. Assigned agents must not receive this connection.
 """
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictStr
 
 from .coordinator import (
     ConceptRequest, IntroductionRequest, PrerequisiteRequest, capabilities,
     prepare_decision, register_contract,
 )
 from .interface import StrictFastMCP
+from .decision_wait import MAX_WAIT_SECONDS, wait_for_decision as observe_decision
 from .lifecycle import Lifecycle
 from .projection import collect, dashboard
 from .store import Rejected, Store
@@ -49,7 +50,10 @@ def create_coordinator_server(store: Store, *, decision_origin: str,
         "operation IDs across retries. Only the human decision page records approval; tool permissions "
         "and model text do not approve work. Admission checks the existing approvals, prerequisites, "
         "resources and limits. A held result is not permission to dispatch. The existing separately "
-        "started worker owns execution and cancellation cleanup. Do not give this connection to workers."
+        "started worker owns execution and cancellation cleanup. After presenting the decision link, "
+        "wait_for_decision can observe its saved answer during a bounded pending tool call. "
+        "It cannot wake an idle chat. Timeout does not answer or cancel a proposal; do not loop "
+        "indefinitely or request the same approval again. Do not give this connection to workers."
     ))
     read = ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=False)
     mutate = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
@@ -57,10 +61,12 @@ def create_coordinator_server(store: Store, *, decision_origin: str,
     @server.tool(annotations=read)
     def interface_capabilities() -> dict[str, Any]:
         """Read exact tool version, coordinator schema, decision route and connection limits."""
-        return {**capabilities(), "mcp_coordinator_version": 1, "audience": audience,
+        return {**capabilities(), "mcp_coordinator_version": 2, "audience": audience,
                 "workflow_methods_exposed": audience == "host", "mcp_workflow_control": audience == "host",
                 "decision_transport": "existing loopback HTTPS page", "decision_url": origin + "/",
                 "coordinator_accepts_approval_answer": False, "worker_process_control": False,
+                "decision_wait": {"available": audience == "host", "max_seconds": MAX_WAIT_SECONDS,
+                                  "continuation": "pending tool call only", "automatic_chat_wake": False},
                 "state_directory": str(store.directory.resolve()),
                 "worker_writable_roots": [str(p.resolve()) for p in store.worker_writable_roots]}
 
@@ -71,6 +77,19 @@ def create_coordinator_server(store: Store, *, decision_origin: str,
 
     if audience == "worker":
         return server
+
+    @server.tool(annotations=read)
+    async def wait_for_decision(work_id: StrictStr, challenge_id: StrictStr, digest: StrictStr,
+                               timeout_seconds: Annotated[int, Field(strict=True, ge=0, le=MAX_WAIT_SECONDS)] = MAX_WAIT_SECONDS) -> dict[str, Any]:
+        """Wait up to 30 seconds for the exact prepared HTTPS decision; never supply an answer.
+
+        Present the decision link first. A saved verified answer returns to this
+        pending call without a manual 'done' message. Reconnect/retry with the
+        same work/challenge/digest; no new request or dispatch is created. A
+        timeout ends only the wait. An idle chat is not woken. Read current work
+        and use existing guarded admission; a saved approval can still be held.
+        """
+        return await observe_decision(store, work_id, challenge_id, digest, timeout_seconds)
 
     @server.tool(annotations=read)
     def read_service_status(work_id: str) -> dict[str, Any]:
