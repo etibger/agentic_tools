@@ -10,18 +10,22 @@ from html import escape
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import errno
 import hmac
 import json
 import os
 import secrets
+import socket
 import ssl
 import sqlite3
 import stat
-from threading import Lock
+from threading import Event, Lock, Thread, current_thread
+import time
+from typing import Callable
 from urllib.parse import parse_qs, urlsplit, urlencode
 from pathlib import Path
 
-from .store import DECISION_CONTEXT_LABELS, Rejected, Store, canonical
+from .store import DECISION_CONTEXT_LABELS, Rejected, Store, canonical, identifier
 
 
 
@@ -42,19 +46,73 @@ summary{cursor:pointer;color:#b9cbd9}h2{white-space:pre-wrap}
 
 
 class DecisionController:
-    def __init__(self, store: Store, *, origin: str, qualification_reference: str):
+    def __init__(self, store: Store, *, origin: str, qualification_reference: str,
+                 work_id: str | None = None, digest: str | None = None,
+                 status: Callable[[], dict] | None = None):
+        if (work_id is None) != (digest is None):
+            raise Rejected("decision_scope", "An owned decision page needs both exact work and concept identity")
+        if work_id is not None:
+            identifier(work_id)
+            if (not isinstance(digest, str) or len(digest) != 71 or not digest.startswith('sha256:')
+                    or any(char not in '0123456789abcdef' for char in digest[7:])):
+                raise Rejected("decision_scope", "Decision scope requires an exact concept SHA-256")
         self.store = store
         self.origin = origin
+        self.work_id, self.digest, self.status = work_id, digest, status
         self.capability = store.host_capability("Codex local HTTPS decision tab", qualification_reference)
         self.sessions: dict[str, tuple[str, str, int, str | None]] = {}
         self.lock = Lock()
 
+    def _in_scope(self, row: dict) -> bool:
+        return self.work_id is None or (row["work_id"] == self.work_id and row["digest"] == self.digest)
+
+    def pending(self) -> list[dict]:
+        return [row for row in self.store.pending_approvals() if row["current"] and self._in_scope(row)]
+
     def current(self, challenge_id: str | None = None) -> dict | None:
-        current = [row for row in self.store.pending_approvals() if row["current"]
-                   and (challenge_id is None or row["challenge_id"] == challenge_id)]
+        current = [row for row in self.pending()
+                   if challenge_id is None or row["challenge_id"] == challenge_id]
         if len(current) > 1:
             raise Rejected("multiple_current_decisions", "More than one current decision awaits an operator")
         return current[0] if current else None
+
+    def recorded(self, challenge_id: str | None = None) -> dict | None:
+        """Read and verify the exact durable answer without creating new readback writes."""
+        if challenge_id is None and self.work_id is None:
+            return None
+        with self.store._connection() as db:
+            db.execute("BEGIN")
+            if challenge_id is not None:
+                row = db.execute("SELECT * FROM decision WHERE challenge_id=?", (challenge_id,)).fetchone()
+            else:
+                row = db.execute("SELECT * FROM decision WHERE work_id=? AND digest=? ORDER BY created_at DESC LIMIT 1",
+                                 (self.work_id, self.digest)).fetchone()
+            if row is None or not self._in_scope(row):
+                return None
+            saved = dict(row)
+        reader = Store(self.store.directory, self.store.worker_writable_roots, read_only=True)
+        receipt = reader.verify_decision(saved["decision_id"])
+        if any(receipt[key] != saved[key] for key in ("work_id", "digest", "challenge_id", "outcome")):
+            raise Rejected("decision_readback_failed", "Saved answer changed during readback")
+        record = reader.read(saved["work_id"])
+        return {"decision": receipt, "record": record,
+                "current": record["current_concept"] == receipt["concept_revision"]}
+
+    def progress(self) -> str:
+        """The optional display callback cannot record an answer or grant execution."""
+        if self.status is None:
+            return ''
+        try:
+            value = self.status()
+            if not isinstance(value, dict):
+                return ''
+            pieces = []
+            for key in ("stage", "detail"):
+                if isinstance(value.get(key), str) and value[key].strip():
+                    pieces.append(escape(value[key][:2048]))
+            return '<p>' + ' — '.join(pieces) + '</p>' if pieces else ''
+        except Exception:
+            return '<p>Live progress is temporarily unavailable. The saved decision below remains authoritative.</p>'
 
     def issue_session(self, challenge_id: str) -> str:
         current = self.current(challenge_id)
@@ -88,6 +146,10 @@ class DecisionController:
 
 def handler_for(controller: DecisionController) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
+        def setup(self) -> None:
+            super().setup()
+            self.connection.settimeout(2)
+
         def response(self, status: HTTPStatus, body: bytes, *, cookie: str | None = None) -> None:
             self.send_response(status)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -106,7 +168,7 @@ def handler_for(controller: DecisionController) -> type[BaseHTTPRequestHandler]:
 
         def recover_session(self, challenge_id: str) -> None:
             current = controller.current(challenge_id)
-            route = '/?' + urlencode({'challenge': challenge_id}) if current else '/'
+            route = '/?' + urlencode({'challenge': challenge_id}) if current or controller.recorded(challenge_id) else '/'
             self.response(HTTPStatus.FORBIDDEN, document(
                 '<h1>Browser session unavailable</h1>'
                 '<p>This tab no longer has valid session credentials. This can happen after the decision service restarts.</p>'
@@ -140,7 +202,7 @@ def handler_for(controller: DecisionController) -> type[BaseHTTPRequestHandler]:
                 if error.code == "multiple_current_decisions":
                     choices = "".join('<li><a href="/?' + escape(urlencode({"challenge": row["challenge_id"]}))
                                       + '">' + escape(row["package"]["body"]) + '</a></li>'
-                                      for row in controller.store.pending_approvals() if row["current"])
+                                      for row in controller.pending())
                     self.response(HTTPStatus.OK, document('<h1>Pending decisions</h1><p>Choose the exact proposal to review. '
                         'Closing the tab supplies no answer.</p><ul>' + choices + '</ul>'))
                 else:
@@ -151,7 +213,30 @@ def handler_for(controller: DecisionController) -> type[BaseHTTPRequestHandler]:
                     '<h1>Decision storage unavailable</h1><p>Work is held. The coordinator must restore recording access.</p>'))
                 return
             if current is None:
-                states = controller.store.decision_states()
+                recorded = controller.recorded(query.get("challenge", [None])[0])
+                if recorded is not None:
+                    decision, record = recorded["decision"], recorded["record"]
+                    effective = decision['outcome'] in {'approved', 'declined', 'cancelled'}
+                    title = 'Decision recorded' if effective else 'Decision not applied'
+                    message = ('This proposal is already answered. The exact answer is saved and verified. No further answer is needed.'
+                               if effective else
+                               'This interaction is recorded, but it did not supply an effective decision. '
+                               'Work remains held for coordinator attention. No answer has been inferred.')
+                    execution = ('<p>Execution: <strong>' + escape(record['execution']) + '</strong></p>'
+                                 if recorded['current'] else
+                                 '<p>This answer belongs to an earlier proposal. It does not approve the current proposal.</p>')
+                    self.response(HTTPStatus.OK, document(
+                        '<h1>' + title + '</h1><section><p>Outcome: <strong>' + escape(decision['outcome'])
+                        + '</strong></p><p>Work: ' + escape(decision['work_id']) + '</p>' + execution
+                        + (controller.progress() if effective and recorded['current'] else '')
+                        + '<p>' + message + '</p>'
+                        + '<details><summary>Exact record</summary><p>Decision ID: ' + escape(decision['decision_id'])
+                        + '</p><p>Digest: ' + escape(decision['digest']) + '</p></details></section>'
+                        + '<p><a href="/?' + escape(urlencode({'challenge': decision['challenge_id']}))
+                        + '">Refresh this proposal status</a></p>'))
+                    return
+                # A scoped listener never exposes another work, even for an unrelated URL.
+                states = controller.store.decision_states() if controller.work_id is None else []
                 summaries = "".join(
                     "<section><p>Work: " + escape(row["work_id"]) + "</p><p>Decision: <strong>"
                     + escape(row["concept_decision"]) + "</strong></p><p>Execution: <strong>"
@@ -257,11 +342,18 @@ SHA-256: {escape(current['digest'])}</small></p>
             except (UnicodeDecodeError, ValueError):
                 self.reject(HTTPStatus.CONFLICT)
                 return
-            body = document(f"<h1>Decision recorded</h1><section><p>Outcome: <strong>{escape(result['outcome'])}</strong></p>"
+            effective = result['outcome'] in {'approved', 'declined', 'cancelled'}
+            title = 'Decision recorded' if effective else 'Decision not applied'
+            message = ('This exact answer is saved. Execution follows the approved limits and current controls.'
+                       if effective else 'This interaction was recorded, but no effective decision was applied. '
+                       'Work remains held for coordinator attention.')
+            body = document(f"<h1>{title}</h1><section><p>Outcome: <strong>{escape(result['outcome'])}</strong></p>"
                             f"<p>Work: {escape(result['work_id'])} · revision: {result['concept_revision']}</p>"
                             f"<p>Digest: {escape(result['digest'])}</p><p>Decision ID: {escape(result['decision_id'])}</p>"
-                            "<p>Implementation dispatch is still gated by the remaining AOS qualifications.</p></section>"
-                            '<p><a href="/">Back to decisions</a></p>')
+                            f"<p>{message}</p>"
+                            + (controller.progress() if effective else '') + '</section>'
+                            '<p><a href="/?' + escape(urlencode({'challenge': values['challenge']}))
+                            + '">Check this proposal status</a></p><p><a href="/">Back to decisions</a></p>')
             self.response(HTTPStatus.OK, body, cookie="aos_decision=; Max-Age=0; HttpOnly; Secure; SameSite=Strict; Path=/")
 
         def log_message(self, format: str, *args: object) -> None:
@@ -271,27 +363,171 @@ SHA-256: {escape(current['digest'])}</small></p>
     return Handler
 
 
+class _DecisionHTTPServer(ThreadingHTTPServer):
+    """Track only this listener's sockets and handlers, including incomplete TLS clients."""
+    daemon_threads = True
+    block_on_close = False
+
+    def __init__(self, address, handler, context):
+        self.context = context
+        self.owned_lock = Lock()
+        self.connections: set[socket.socket] = set()
+        self.handlers: set[Thread] = set()
+        super().__init__(address, handler)
+        self.socket.settimeout(.2)
+        self.timeout = .1
+
+    def get_request(self):
+        connection, address = super().get_request()
+        connection.settimeout(2)
+        try:
+            # Handshake belongs to the bounded request thread, not the accept loop.
+            request = self.context.wrap_socket(connection, server_side=True, do_handshake_on_connect=False)
+        except BaseException:
+            connection.close()
+            raise
+        with self.owned_lock:
+            self.connections.add(request)
+        return request, address
+
+    def process_request(self, request, client_address):
+        thread = Thread(target=self.process_request_thread, args=(request, client_address),
+                        name='aos-decision-request', daemon=True)
+        with self.owned_lock:
+            self.handlers = {prior for prior in self.handlers if prior.is_alive()}
+            self.handlers.add(thread)
+        try:
+            thread.start()
+        except BaseException:
+            with self.owned_lock:
+                self.handlers.discard(thread)
+            self.shutdown_request(request)
+            raise
+
+    def shutdown_request(self, request):
+        try:
+            super().shutdown_request(request)
+        finally:
+            with self.owned_lock:
+                self.connections.discard(request)
+
+    def close_requests(self, deadline: float) -> bool:
+        with self.owned_lock:
+            connections = tuple(self.connections)
+            handlers = tuple(self.handlers)
+        for connection in connections:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # The exact accepted socket may already have closed.
+        for thread in handlers:
+            thread.join(max(0, deadline - time.monotonic()))
+        with self.owned_lock:
+            return not self.connections and not any(thread.is_alive() for thread in self.handlers)
+
+
+class DecisionService:
+    """One owned HTTPS listener; authoritative progress remains in Store/Lifecycle.
+
+    Enter binds and starts the listener before a supervisor presents a challenge.
+    Closing interrupts only this service's accepted sockets and verifies its own
+    listener and handlers have stopped. No service is installed or adopted.
+    """
+    def __init__(self, store: Store, *, certificate: str, key: str, port: int,
+                 qualification_reference: str, work_id: str | None = None,
+                 digest: str | None = None, status: Callable[[], dict] | None = None):
+        if type(port) is not int or not 1 <= port <= 65535:
+            raise Rejected("invalid_port", "HTTPS port must be in range 1-65535")
+        self.store, self.certificate, self.key, self.port = store, certificate, key, port
+        self.origin = f"https://127.0.0.1:{port}"
+        self.url = self.origin + '/'
+        self.controller = DecisionController(store, origin=self.origin,
+            qualification_reference=qualification_reference, work_id=work_id, digest=digest, status=status)
+        self.server = None
+        self.thread = None
+        self.started = Event()
+        self.stop_requested = Event()
+        self.failure = None
+        self.closed = False
+        self.cleanup = {"listener_stopped": False, "requests_stopped": False}
+
+    def __enter__(self):
+        if self.server is not None or self.closed:
+            raise Rejected("decision_service_state", "A decision service instance cannot be started twice")
+        key_info = Path(self.key).lstat()
+        if (not stat.S_ISREG(key_info.st_mode) or key_info.st_uid != os.getuid()
+                or stat.S_IMODE(key_info.st_mode) & 0o077):
+            raise Rejected("unsafe_tls_key", "TLS key must be a private user-owned regular file")
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        try:
+            context.load_cert_chain(self.certificate, self.key, password=lambda: '')
+        except (OSError, ssl.SSLError) as error:
+            raise Rejected("tls_unavailable", "Local HTTPS certificate or key could not be loaded; decisions remain held") from error
+        try:
+            self.server = _DecisionHTTPServer(("127.0.0.1", self.port), handler_for(self.controller), context)
+        except OSError as error:
+            if error.errno == errno.EADDRINUSE:
+                raise Rejected("decision_port_in_use", "The decision port is occupied; the existing listener was not changed") from error
+            raise
+        self.thread = Thread(target=self._serve, name='aos-decision-listener', daemon=True)
+        try:
+            self.thread.start()
+            if not self.started.wait(2):
+                raise Rejected("decision_service_unavailable", "Decision listener did not start")
+            self.check()
+        except BaseException:
+            self.close()
+            raise
+        return self
+
+    def _serve(self):
+        self.started.set()
+        try:
+            while not self.stop_requested.is_set():
+                self.server.handle_request()
+        except BaseException as error:
+            if not self.stop_requested.is_set():
+                self.failure = error
+
+    def check(self) -> None:
+        if self.closed or self.failure is not None or self.thread is None or not self.thread.is_alive():
+            raise Rejected("decision_service_unavailable", "Decision listener is not running; saved answers remain recorded")
+
+    def close(self) -> dict:
+        if self.closed:
+            return dict(self.cleanup)
+        if self.thread is current_thread():
+            raise Rejected("decision_service_cleanup", "The listener cannot join itself")
+        deadline = time.monotonic() + 6
+        self.stop_requested.set()
+        if self.server is not None:
+            # Closing the listener is nonblocking; BaseServer.shutdown() would
+            # wait forever if its serve_forever loop failed before starting.
+            self.server.server_close()
+            if self.thread is not None and self.thread.is_alive():
+                self.thread.join(max(0, deadline - time.monotonic()))
+            requests_stopped = self.server.close_requests(deadline)
+        else:
+            requests_stopped = True
+        self.cleanup = {"listener_stopped": self.thread is None or not self.thread.is_alive(),
+                        "requests_stopped": requests_stopped}
+        self.closed = all(self.cleanup.values())
+        if not self.closed:
+            raise Rejected("decision_service_cleanup", "Decision listener or an owned request has not stopped; cleanup is unverified")
+        return dict(self.cleanup)
+
+    def __exit__(self, *_args):
+        self.close()
+
+    def wait(self) -> None:
+        while True:
+            self.check()
+            self.thread.join(.25)
+
+
 def serve_https(store: Store, *, certificate: str, key: str, port: int, qualification_reference: str) -> None:
-    if not 1 <= port <= 65535:
-        raise Rejected("invalid_port", "HTTPS port must be in range 1-65535")
-    key_path = Path(key)
-    key_info = key_path.lstat()
-    if (not stat.S_ISREG(key_info.st_mode) or key_info.st_uid != os.getuid()
-            or stat.S_IMODE(key_info.st_mode) & 0o077):
-        raise Rejected("unsafe_tls_key", "TLS key must be a private user-owned regular file")
-    origin = f"https://127.0.0.1:{port}"
-    controller = DecisionController(store, origin=origin, qualification_reference=qualification_reference)
-    server = ThreadingHTTPServer(("127.0.0.1", port), handler_for(controller))
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-    context.minimum_version = ssl.TLSVersion.TLSv1_2
-    try:
-        context.load_cert_chain(certificate, key)
-        server.socket = context.wrap_socket(server.socket, server_side=True)
-    except (OSError, ssl.SSLError) as error:
-        server.server_close()
-        raise Rejected("tls_unavailable", "Local HTTPS certificate or key could not be loaded; decisions remain held") from error
-    print(origin + "/", flush=True)
-    try:
-        server.serve_forever()
-    finally:
-        server.server_close()
+    with DecisionService(store, certificate=certificate, key=key, port=port,
+                         qualification_reference=qualification_reference) as service:
+        print(service.url, flush=True)
+        service.wait()

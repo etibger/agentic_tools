@@ -141,7 +141,7 @@ def test_unrecognized_or_mismatched_adapter_is_rejected(descriptor):
 def test_tool_identity_covers_reusable_adapters():
     report = capabilities()
     assert report['source_digest'] == source_digest()
-    assert set(report['check_adapters']) == {'pytest-v1', 'native-build-v1', 'cargo-test-v1'}
+    assert set(report['check_adapters']) == {'pytest-v1', 'native-build-v1', 'cargo-test-v1', 'native-tests-v1'}
     assert all(v['version'] == 1 and v['source_digest'].startswith('sha256:') for v in report['check_adapters'].values())
     root = Path(__file__).parents[1] / 'src/agentic_tools'
     for package in ('aos', 'check_adapters'):

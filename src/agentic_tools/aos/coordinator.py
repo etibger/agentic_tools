@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from . import version_receipt
 from .interface import TeamMember
@@ -38,9 +38,16 @@ class ExecutionEnvelope(BaseModel):
     qualified_route: str = Field(min_length=1)
     max_assignments: int = Field(ge=1)
     max_repairs: int = Field(ge=0, le=2)
+    max_startup_retries: int = Field(default=0, ge=0, le=2)
     max_seconds: int = Field(ge=1)
     model: str = Field(min_length=1)
     effort: str = Field(min_length=1)
+
+    @model_validator(mode='after')
+    def startup_retry_policy(self):
+        if self.max_startup_retries and getattr(self, 'execution_policy', None) != 'isolated-checkout-v1':
+            raise ValueError('Startup retries require the isolated-checkout-v1 execution policy')
+        return self
 
 
 class IntroductionRequest(BaseModel):
@@ -172,12 +179,12 @@ def capabilities() -> dict:
     return {**version_receipt(), "coordinator_commands_version": 1,
             "source_digest": source_digest(), "check_adapters": adapter_identities(),
             "check_adapter_contract_version": 1,
-            "source_scope": "AOS and reusable check-adapter Python package files; excludes state, configuration, dependencies and documentation",
-            "coordinator_commands": ["introduce-work", "present-concept", "register-contract", "prepare-decision", "decide-serve",
+            "source_scope": "AOS, reusable check-adapter and maintained project-adapter Python package files; excludes state, configuration, dependencies and documentation",
+            "coordinator_commands": ["start", "prepare-project", "introduce-work", "present-concept", "register-contract", "prepare-decision", "decide-serve",
                                      "admit", "status", "pause", "resume", "cancel", "worker", "version",
                                      "dashboard-serve", "dashboard-inspect", "dashboard-stop", "reconcile-prerequisites",
                                      "backup-ledger", "restore-ledger", "serve-coordinator",
-                                     "instruction-manifest", "backlog-preview", "backlog-reconcile"],
+                                     "instruction-manifest", "backlog-preview", "backlog-reconcile", "recover-legacy-cancellation", "recover-startup-failure", "continue-recovered-startup"],
             "dashboard_service_version": 1,
             "workflow_control_transport": "trusted coordinator CLI and MCP using the same Store/Lifecycle; explicit Worker process",
             "coordinator_accepts_approval_answer": False, "mcp_workflow_control": True,

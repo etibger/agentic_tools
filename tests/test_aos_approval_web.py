@@ -18,11 +18,11 @@ from test_aos_store import TEAM
 
 
 @contextmanager
-def running_page(store):
+def running_page(store, **controller_options):
     server = ThreadingHTTPServer(("127.0.0.1", 0), BaseHTTPRequestHandler)
     port = server.server_address[1]
     origin = f"https://127.0.0.1:{port}"
-    controller = DecisionController(store, origin=origin, qualification_reference="SIMULATED:web-test")
+    controller = DecisionController(store, origin=origin, qualification_reference="SIMULATED:web-test", **controller_options)
     server.RequestHandlerClass = handler_for(controller)
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()

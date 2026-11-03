@@ -22,6 +22,16 @@ def main(argv: list[str] | None = None) -> int:
     instruction_command = commands.add_parser('instruction-manifest', help='Inspect exact ordered instruction files and aliases; no runtime, permission or approval change')
     instruction_command.add_argument('--source', type=Path, required=True)
     instruction_command.add_argument('--support-file', type=Path, action='append', default=[])
+    instruction_command.add_argument('--project-doc-max-bytes', type=int,
+                                     help='Bind a runtime-only instruction limit increase, at most 1 MiB; never edits configuration')
+    instruction_command.add_argument('--allow-project-registration', action='store_true',
+                                     help='Declare one absent-to-trusted entry for this exact project during startup; requires recipe approval')
+    for name, help_text in (
+            ('prepare-project', 'Prepare one bounded project request and host readiness; no approval or product work'),
+            ('start', 'Own project preparation, its human decision page and bounded continuation in the foreground')):
+        project_command = commands.add_parser(name, help=help_text)
+        project_command.add_argument('--project', type=Path, required=True, help='Maintained strict project configuration')
+        project_command.add_argument('--request', type=Path, required=True, help='Existing introduction and concept request')
     backlog_preview = commands.add_parser('backlog-preview', help='Preview one mapped backlog row against its existing GitHub issue/project; no target writes')
     backlog_preview.add_argument('--markdown', type=Path, required=True)
     backlog_preview.add_argument('--item', required=True)
@@ -40,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument('--fake-destination', type=Path, required=True)
     for name in ("serve", "serve-coordinator", "status", "archive-preview", "archive-prepare-local", "prepare-decision", "decide-serve", "worker", "backup-ledger", "recover-startup-approval",
                  "introduce-work", "present-concept", "register-contract", "admit", "pause", "resume", "cancel",
-                 "dashboard-serve", "dashboard-inspect", "dashboard-stop", "reconcile-prerequisites", "restore-ledger"):
+                 "dashboard-serve", "dashboard-inspect", "dashboard-stop", "reconcile-prerequisites", "restore-ledger", "recover-legacy-cancellation", "recover-startup-failure", "continue-recovered-startup"):
         command = commands.add_parser(name)
         command.add_argument("--state-dir", type=Path, required=True, help="Private authoritative directory outside all worker-writable roots")
         command.add_argument("--worker-writable-root", type=Path, action="append", required=True, help="Declare each worker-writable root; actual runtime denial still needs verification")
@@ -49,6 +59,9 @@ def main(argv: list[str] | None = None) -> int:
                 command.add_argument("--work", action="append", required=True, help="Explicit allowed view: kebab-case-alias=WORK_ID; repeat for multiple works")
                 command.add_argument("--port", type=int, required=True, help="Loopback HTTP port; 0 requests an unused disposable port")
                 command.add_argument("--archive-journal", type=Path, help="Optional explicit local history journal; read-only and never served as a file")
+        elif name in ("recover-legacy-cancellation", "recover-startup-failure", "continue-recovered-startup"):
+            command.add_argument("--request", type=Path, required=True, help="Exact protected current-state recovery packet; never an approval answer")
+            command.add_argument("--apply", action="store_true", help="Apply the exact recovery; default only previews")
         elif name in ("introduce-work", "present-concept", "reconcile-prerequisites"):
             command.add_argument("--request", type=Path, required=True, help="Strict JSON request; no approval answer is accepted")
         elif name in ("register-contract", "admit", "pause", "resume", "cancel"):
@@ -103,6 +116,24 @@ def main(argv: list[str] | None = None) -> int:
                                  help="Operator evidence reference; this label alone is not proof of human action")
     args = parser.parse_args(argv)
     try:
+        if args.command == 'start':
+            from .supervisor import start
+            result = start(args.project, args.request)
+            print(json.dumps(result, indent=2), flush=True)
+            return 0 if result.get('state') in {'delivered', 'declined', 'cancelled'} else 3
+        if args.command == 'prepare-project':
+            from .project import prepare, prepare_directories
+            result = prepare(args.project, args.request)
+            if (not result['ready'] and result['blocker']['code'] == 'project_directories'
+                    and result.get('required_directories')):
+                directories = prepare_directories(args.project, args.request, plan=result)
+                if directories['prepared']:
+                    result = prepare(args.project, args.request)
+                else:
+                    result['blocker'] = directories['blocker']
+                result['directory_preparation'] = directories
+            print(json.dumps(result, indent=2))
+            return 0 if result['ready'] else 3
         if args.command.startswith('backlog-'):
             from .backlog import GitHubReader, prepare, preview, reconcile
             if args.command == 'backlog-preview':
@@ -115,7 +146,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command == 'instruction-manifest':
             from .instructions import discover
-            print(json.dumps(discover(args.source, support_files=args.support_file), indent=2))
+            print(json.dumps(discover(args.source, support_files=args.support_file,
+                                      allow_project_registration=args.allow_project_registration,
+                                      project_doc_max_bytes=args.project_doc_max_bytes), indent=2))
             return 0
         if args.command == "version":
             from .coordinator import capabilities
@@ -131,6 +164,32 @@ def main(argv: list[str] | None = None) -> int:
             result = inspect_service(store) if args.command == "dashboard-inspect" else stop_service(store)
             print(json.dumps(result, indent=2))
             return 3 if result.get("state") == "unavailable" else 0
+        if args.command == "continue-recovered-startup":
+            from .coordinator import request_file
+            from .startup_resource_continuation import StartupResourceContinuationRequest, acknowledge
+            from .lifecycle import Lifecycle
+            request = request_file(args.request, StartupResourceContinuationRequest)
+            store = Store(args.state_dir, tuple(args.worker_writable_root), read_only=not args.apply)
+            lifecycle = Lifecycle(store) if args.apply else Lifecycle.for_reading(store)
+            print(json.dumps(acknowledge(lifecycle, request, apply=args.apply), indent=2))
+            return 0
+        if args.command == "recover-startup-failure":
+            from .coordinator import request_file
+            from .startup_failure_recovery import StartupFailureRecoveryRequest, recover
+            from .lifecycle import Lifecycle
+            request = request_file(args.request, StartupFailureRecoveryRequest)
+            store = Store(args.state_dir, tuple(args.worker_writable_root), read_only=not args.apply)
+            lifecycle = Lifecycle(store) if args.apply else Lifecycle.for_reading(store)
+            print(json.dumps(recover(lifecycle, request, apply=args.apply), indent=2))
+            return 0
+        if args.command == "recover-legacy-cancellation":
+            from .coordinator import request_file
+            from .legacy_recovery import LegacyRecoveryRequest, recover
+            from .lifecycle import Lifecycle
+            request = request_file(args.request, LegacyRecoveryRequest)
+            store = Store(args.state_dir, tuple(args.worker_writable_root))
+            print(json.dumps(recover(Lifecycle(store), request, apply=args.apply), indent=2))
+            return 0
         if args.command in ("introduce-work", "present-concept", "reconcile-prerequisites"):
             from .coordinator import ConceptRequest, IntroductionRequest, PrerequisiteRequest, request_file
             schema = {"introduce-work": IntroductionRequest, "present-concept": ConceptRequest,

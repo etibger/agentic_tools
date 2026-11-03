@@ -192,4 +192,8 @@ vm.runInContext('render(sample,Date.parse("2030-01-01T10:00:00Z"))',context);
 assert.match(nodes.get('plot').innerHTML,/No recorded gate history/);
 assert.throws(()=>vm.runInContext('validate({...sample,completed_at:"2030-01-01T11:00:00Z"})',context),/all accepted gates/);
 assert.throws(()=>vm.runInContext('validate({...sample,updated_at:"invalid"})',context),/timestamp/);
+context.retired={...state,completed_at:null,history:[],tasks:[{id:'legacy',title:'Legacy operational ownership',status:'retired'}]};
+vm.runInContext('render(validate(retired),Date.parse("2030-01-01T12:00:00Z"))',context);
+assert.equal(nodes.get('count').textContent,'0 accepted · 1 retired · 0 remaining','Retired ownership is never accepted delivery');
+assert.throws(()=>vm.runInContext('validate({...retired,completed_at:"2030-01-01T11:00:00Z"})',context),/all accepted gates/);
 console.log('Live dashboard checks passed: decisions vs blockers, partial usage and unknown cost, safe text/links, bounded SVG, final clock, empty history and failed refresh.');

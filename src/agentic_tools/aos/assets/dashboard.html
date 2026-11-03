@@ -52,7 +52,7 @@ const phaseViews=new Map();
 let phaseMode='flow';
 function setPhaseMode(mode){phaseMode=mode;if(lastGood)renderPhase(lastGood);}
 let phaseUI={model:null,scale:1,pinned:null,preview:null,suppressPreview:false,width:0,height:0,drag:null};
-const phaseStatus=s=>({accepted:'Accepted',active:'Active',ready:'Ready',review:'Under review',changes_requested:'Needs correction',waiting:'Waiting',held:'Held',failed:'Failed',pending:'Pending'}[s]);
+const phaseStatus=s=>({accepted:'Accepted',active:'Active',ready:'Ready',review:'Under review',changes_requested:'Needs correction',waiting:'Waiting',held:'Held',failed:'Failed',pending:'Pending',retired:'Retired'}[s]);
 const phaseCondition=(n,dep)=>n.dependency_conditions?.[dep]||'accepted';
 const phaseConditionLabel=c=>({accepted:'accepted',completed:'on completion: independent review',failed:'failed review triggers authorized correction'}[c]);
 const phaseTransition=(n,dep)=>n.dependency_labels?.[dep]||phaseConditionLabel(phaseCondition(n,dep));
@@ -152,7 +152,7 @@ function validate(s){
  if(s.collector&&(!['current','failed'].includes(s.collector.health)||!Number.isFinite(Date.parse(s.observed_at))))throw Error('Invalid source collector observation');
  if(s.source_digest&&(!Number.isInteger(s.source_revision)||[s.phase_flow,s.phase_graph].filter(Boolean).some(m=>m.source_revision!==s.source_revision||m.provenance!==s.source_digest)))throw Error('Service/dashboard source identity mismatch');
  if(lastGood&&s.project===lastGood.project&&Number.isInteger(s.source_revision)&&Number.isInteger(lastGood.source_revision)&&s.source_revision<lastGood.source_revision)throw Error('Older service source revision');
- if(s.tasks.some(t=>!['pending','active','accepted','held'].includes(t.status)))throw Error('Invalid task status');
+ if(s.tasks.some(t=>!['pending','active','accepted','held','retired'].includes(t.status)))throw Error('Invalid task status');
  if(s.decisions.some(d=>!['pending','approved','declined','withdrawn','technical_hold'].includes(d.status)))throw Error('Invalid decision status');
  if(s.history.some(p=>!Number.isFinite(Date.parse(p.at))||!Number.isFinite(p.remaining)||p.remaining<0))throw Error('Invalid burndown history');
  const accepted=s.tasks.filter(t=>t.status==='accepted');
@@ -166,7 +166,7 @@ function validate(s){
  validatePhase(s.phase_graph);validatePhase(s.phase_flow);return s;
 }
 function drawChart(s,now){
- const base=Date.parse(s.baseline_at), remaining=s.tasks.filter(t=>t.status!=='accepted').length;
+ const base=Date.parse(s.baseline_at), remaining=s.tasks.filter(t=>!['accepted','retired'].includes(t.status)).length;
  const endTime=s.completed_at?Date.parse(s.completed_at):Math.max(now,Date.parse(s.updated_at));
  const end=Math.max(1,(endTime-base)/60000);
  const points=s.history.filter(p=>Date.parse(p.at)>=base&&Date.parse(p.at)<=endTime).slice().sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
@@ -181,7 +181,8 @@ function drawChart(s,now){
  else markup+='<text x="70" y="150" fill="#a4b4c3">No recorded gate history yet</text>';
  markup+='<text x="490" y="352" text-anchor="middle" fill="#a4b4c3" font-size="14">Actual elapsed time since plan approval</text>';
  el('plot').innerHTML=markup;el('chart-desc').textContent=remaining+' approved gates remain; '+end.toFixed(1)+' elapsed minutes.';
- el('count').textContent=(s.tasks.length-remaining)+' completed · '+remaining+' remaining';
+ const accepted=s.tasks.filter(t=>t.status==='accepted').length,retired=s.tasks.filter(t=>t.status==='retired').length;
+ el('count').textContent=accepted+' accepted · '+(retired?retired+' retired · ':'')+remaining+' remaining';
  el('clock').textContent=(s.completed_at?'Completed duration: ':'Elapsed: ')+Math.floor((endTime-base)/3600000)+' h '+Math.floor((endTime-base)/60000)%60+' min · baseline '+time(s.baseline_at);
  el('checklist').textContent=s.tasks.map(t=>t.id+': '+t.status+(t.accepted_at?' at '+time(t.accepted_at):'')).join(' · ');
 }

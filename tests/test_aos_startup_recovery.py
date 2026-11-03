@@ -235,3 +235,78 @@ def test_post_spawn_observation_failure_retains_exact_handle_for_close(rejected,
     p.runtime.close()
     assert client.proc.exited
     assert p.runtime.cancel(assignment['attempt_id'])['effects_reconciled'] is False
+
+
+@pytest.mark.parametrize('failure', ['instruction', 'model', 'post_config'])
+@pytest.mark.parametrize('preflight', [False, True])
+def test_acknowledged_no_turn_failure_is_terminal_and_never_success(rejected, failure, preflight):
+    p = rejected
+    factory = p.backend.factory
+    def fails_after_ack(*args):
+        client = factory(*args)
+        request = client.request
+        reads = 0
+        def call(method, params=None):
+            nonlocal reads
+            if method == 'config/read':
+                reads += 1
+                if reads == 2 and failure == 'post_config':
+                    p.backend.bad_config = True
+            result = request(method, params)
+            if method == 'thread/start':
+                if failure == 'instruction':
+                    (p.source / 'AGENTS.md').write_text('new instructions')
+                elif failure == 'model':
+                    result['model'] = 'unexpected'
+            return result
+        client.request = call
+        return client
+    p.runtime.factory = fails_after_ack
+    assignment = claim(p)
+    observed = p.runtime.start(assignment, preflight_only=preflight)
+    if failure == 'instruction':
+        # The failure proof exists, but changed source must still hold cleanup.
+        assert observed['state'] == 'unknown'
+        record = p.runtime._get(assignment['attempt_id'])
+        assert record['startup_outcome']['kind'] == 'acknowledged_no_turn_failure'
+        assert p.runtime.cancel(assignment['attempt_id'])['effects_reconciled'] is False
+    else:
+        assert observed['state'] == 'startup_failed'
+        assert observed['thread_id'] == 'thread-0' and observed['turn_id'] is None
+        assert observed['result']['startup_outcome']['kind'] == 'acknowledged_no_turn_failure'
+        assert observed['result']['effects_reconciled'] is True
+        with Worker(p.lifecycle, p.runtime) as worker:
+            worker._consume(assignment, observed)
+        assert p.lifecycle.assignments()[0]['state'] == 'failed'
+        assert p.lifecycle.snapshot('Q2')['execution'] == 'held'
+        p.runtime.close()
+        reopened = CodexRuntime(p.lifecycle, {'Q2': p.recipe}, transport_factory=fails_after_ack)
+        try:
+            assert reopened.lookup(assignment['attempt_id']) == observed
+            assert reopened.start(assignment) == observed
+            assert reopened.cancel(assignment['attempt_id'])['effects_reconciled']
+        finally:
+            reopened.close()
+    assert p.backend.count('thread/start') == 1 and p.backend.count('turn/start') == 0
+    assert p.runtime.budget_receipt()['attempts_reserved'] == 1
+
+
+@pytest.mark.parametrize('thread', [None, '', ' ', 42, [], {'id': None}])
+def test_malformed_ack_never_produces_no_turn_proof(rejected, thread):
+    p = rejected
+    def factory(*args):
+        client = p.backend.factory(*args)
+        original = client.request
+        def request(method, params=None):
+            result = original(method, params)
+            if method == 'thread/start':
+                result['thread'] = thread if thread is None or isinstance(thread, dict) else {'id': thread}
+            return result
+        client.request = request
+        return client
+    p.runtime.factory = factory
+    assignment = claim(p)
+    assert p.runtime.start(assignment, preflight_only=True)['state'] == 'unknown'
+    assert not p.runtime._get(assignment['attempt_id']).get('startup_outcome')
+    assert p.runtime.cancel(assignment['attempt_id'])['effects_reconciled'] is False
+    assert p.backend.count('turn/start') == 0

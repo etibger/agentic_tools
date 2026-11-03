@@ -7,12 +7,13 @@ from pathlib import Path
 
 from agentic_tools import check_adapters
 from .store import Rejected, digest
+from .native_paths import overlaps, writable_roots
 
 
 def source_manifest() -> dict[str, str]:
     root = Path(__file__).parent.parent
     return {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
-            for package in ('aos', 'check_adapters') for p in sorted((root / package).rglob('*.py'))}
+            for package in ('aos', 'check_adapters', 'projects') for p in sorted((root / package).rglob('*.py'))}
 
 
 def source_digest() -> str:
@@ -51,7 +52,7 @@ def passed(evidence: dict, exit_code: int | None) -> bool:
 
 
 def _protected(path: Path, writable_roots: tuple[Path, ...]) -> bool:
-    return not any(path.resolve().is_relative_to(root.resolve()) for root in writable_roots)
+    return not any(overlaps(path.resolve(), root.resolve()) for root in writable_roots)
 
 
 def bindings(store, work_id: str, package: dict, recipe: dict) -> dict[str, dict]:
@@ -62,9 +63,12 @@ def bindings(store, work_id: str, package: dict, recipe: dict) -> dict[str, dict
     recorded through an already approved prerequisite. Reading a file/flag alone
     never creates that prerequisite or approves work.
     """
-    roots = (*store.worker_writable_roots, Path(recipe['source']), Path(recipe['outputs']))
+    roots = (*store.worker_writable_roots, Path(recipe['source']), Path(recipe['outputs']),
+             *writable_roots(recipe, protected=(store.directory.resolve(), Path.home() / '.codex')))
     if any(p.is_symlink() or not _protected(p, roots) for p in check_adapters.code_paths()):
         raise Rejected('check_adapter', 'Trusted adapter code overlaps a worker-writable root')
+    if any(p.is_symlink() or not _protected(p, roots) for p in Path(__file__).parent.glob('*.py')):
+        raise Rejected('check_adapter', 'Trusted coordinator code overlaps a worker-writable root')
     selected = {adapter_for(check).ADAPTER_ID for check in recipe['checks']}
     current = {name: check_adapters.identities()[name] for name in sorted(selected)}
     bounds = package['execution_envelope']

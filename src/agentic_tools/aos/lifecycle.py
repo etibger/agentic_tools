@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 
 from .store import Rejected, Store, canonical, digest, identifier, now
 from .checks import adapter_for, bindings, check_kind, validate_normalized, passed as evidence_passed
+from .checkout_boundary import reviewed_host, changes_allowed
 
 
 SCHEMA = """
@@ -61,7 +62,7 @@ CREATE TABLE IF NOT EXISTS runtime_observation (
 """
 
 
-TERMINAL_EXECUTIONS = frozenset({'cancelled', 'delivered'})
+TERMINAL_EXECUTIONS = frozenset({'cancelled', 'delivered', 'retired'})
 CANCELLATION_CONTROLS = frozenset({'cancel_requested', 'reconciling', 'blocked_unknown_effects', 'cancelled'})
 
 
@@ -87,6 +88,57 @@ def partial_mutations_known(observation: dict) -> bool:
 def stopped_with_effects(observation: dict) -> bool:
     return (observation.get('stopped') is True and observation.get('owned_processes') == []
             and observation.get('effects_reconciled') is True and partial_mutations_known(observation))
+
+
+def _known_startup_failure(assignment: dict, result: dict, observation: dict | None,
+                           receipt_id: str, recipe: dict) -> bool:
+    """Only affirmative, complete pre-model evidence can spend a startup retry."""
+    if not isinstance(observation, dict):
+        return False
+    required = {'state', 'attempt_id', 'model', 'effort', 'thread_id', 'turn_id',
+                'model_calls_attempted', 'result', 'receipt_id'}
+    if (not required.issubset(observation) or observation['state'] != 'startup_failed'
+            or observation['attempt_id'] != assignment['attempt_id']
+            or observation['receipt_id'] != receipt_id or observation['result'] != result
+            or type(observation['model_calls_attempted']) is not int or observation['model_calls_attempted'] != 0
+            or observation['turn_id'] is not None
+            or result.get('attempt_id') != assignment['attempt_id']
+            or result.get('executor') != assignment['executor'] or result.get('status') != 'failed'
+            or result.get('stopped') is not True or result.get('owned_processes') != []
+            or result.get('effects_reconciled') is not True):
+        return False
+    for name in ('model', 'effort'):
+        if observation[name] is not None and observation[name] != assignment['requested_' + name]:
+            return False
+    for name in ('partial_mutations', 'output_mutations'):
+        value = result.get(name)
+        if not isinstance(value, dict) or value.get('status') != 'none' or value.get('changes') != []:
+            return False
+    limits = result.get('resource_limits')
+    if not isinstance(limits, dict) or 'breach' not in limits or limits['breach'] is not None:
+        return False
+    native = result.get('native_path_effects')
+    if native is not None or recipe.get('native_write_roots'):
+        if (not isinstance(native, dict) or native.get('observed') is not True
+                or not isinstance(native.get('changes'), dict)
+                or any(changes != [] for changes in native['changes'].values())):
+            return False
+        if recipe.get('native_write_roots') and set(native['changes']) != {
+                root['path'] for root in recipe['native_write_roots']}:
+            return False
+    if result.get('native_checks', []) != [] or result.get('native_output_mutations', {}) != {}:
+        return False
+    proof = result.get('startup_outcome')
+    if not isinstance(proof, dict) or proof.get('attempt_id') != assignment['attempt_id']:
+        return False
+    thread = observation['thread_id']
+    if proof.get('kind') == 'acknowledged_no_turn_failure':
+        return (isinstance(thread, str) and bool(thread.strip()) and proof.get('thread_id') == thread
+                and proof.get('method') == 'thread/start' and proof.get('turn_started') is False)
+    return (thread is None and (proof.get('kind') == 'before_thread_request'
+            or (proof.get('kind') == 'rejected' and proof.get('method') == 'thread/start'
+                and isinstance(proof.get('request_id'), str) and bool(proof['request_id'].strip())
+                and type(proof.get('code')) is int)))
 
 
 def stop_conflicts_in(db: sqlite3.Connection, work_id: str) -> list[dict]:
@@ -207,6 +259,16 @@ class Lifecycle:
         with store._connection() as db:
             db.executescript(SCHEMA)
 
+    @classmethod
+    def for_reading(cls, store: Store):
+        """Use existing lifecycle state without creating or migrating its schema."""
+        if not store.read_only:
+            raise Rejected('read_only', 'A preview context requires a read-only store')
+        lifecycle = cls.__new__(cls)
+        lifecycle.store = store
+        lifecycle._fault = lambda stage: None
+        return lifecycle
+
     def _touch(self, db: sqlite3.Connection, work_id: str, kind: str, detail: Any) -> None:
         timestamp = now()
         db.execute('UPDATE work SET revision=revision+1,updated_at=? WHERE work_id=?', (timestamp, work_id))
@@ -217,7 +279,7 @@ class Lifecycle:
                next_action: str = 'Coordinator reconciles evidence and explicitly retries', *, dependency: str = 'dispatch') -> None:
         db.execute('INSERT OR REPLACE INTO technical_blocker VALUES(?,?,?,?,?,?,?)',
                    (work_id, code, 'coordinator', dependency, detail, next_action, now()))
-        db.execute("UPDATE lifecycle SET execution=CASE WHEN execution IN ('paused','cancelled','delivered') THEN execution ELSE 'held' END WHERE work_id=?", (work_id,))
+        db.execute("UPDATE lifecycle SET execution=CASE WHEN execution IN ('paused','cancelled','delivered','retired') THEN execution ELSE 'held' END WHERE work_id=?", (work_id,))
 
     def _command_guard(self, db: sqlite3.Connection, work_id: str,
                        expected_work_revision: int | None, expected_digest: str | None) -> None:
@@ -255,8 +317,11 @@ class Lifecycle:
                 or len(set(contract['required_checks'])) != len(contract['required_checks'])):
             raise Rejected('independence_required', 'A distinct assessor and unique named checks are required')
         if (any(type(contract[k]) is not int or contract[k] < 1 for k in ('revision', 'concept_revision', 'max_assignments', 'max_seconds'))
-                or type(contract['max_repairs']) is not int or not 0 <= contract['max_repairs'] <= 2):
-            raise Rejected('invalid_limits', 'Positive bounded assignment/time limits and at most two repairs required')
+                or type(contract['max_repairs']) is not int or not 0 <= contract['max_repairs'] <= 2
+                or type(contract.get('max_startup_retries', 0)) is not int
+                or not 0 <= contract.get('max_startup_retries', 0) <= 2
+                or (contract.get('max_startup_retries', 0) and contract.get('execution_policy') != 'isolated-checkout-v1')):
+            raise Rejected('invalid_limits', 'Positive bounded assignment/time limits and at most two repairs or isolated-checkout startup retries required')
         if (not isinstance(contract['prerequisites'], dict) or not isinstance(contract['resources'], list)
                 or not all(isinstance(r, str) and r for r in contract['resources'])):
             raise Rejected('invalid_contract', 'Named prerequisites and resources required')
@@ -339,15 +404,24 @@ class Lifecycle:
         for field in exact:
             if field not in bounds or contract.get(field) != bounds[field]:
                 errors.append('Execution contract differs from approved ' + field)
-        for field in ('runtime_recipe', 'check_kinds', 'check_adapters', 'product_budget', 'adapter_architecture'):
+        for field in ('execution_policy', 'runtime_recipe', 'check_kinds', 'check_adapters', 'product_budget', 'adapter_architecture'):
             if field in bounds or field in contract:
                 if contract.get(field) != bounds.get(field):
                     errors.append('Execution contract differs from approved ' + field)
+        if (contract.get('execution_policy') == 'isolated-checkout-v1'
+                and contract.get('runtime_recipe_digest') != bounds.get('runtime_recipe_digest')):
+            errors.append('Execution contract differs from approved runtime_recipe_digest')
         if package.get('authority') != bounds.get('authority'):
             errors.append('Execution authority disagrees with the approved package authority')
         for field in ('max_assignments', 'max_repairs', 'max_seconds'):
             if type(bounds.get(field)) is not int or not 0 <= contract[field] <= bounds[field]:
                 errors.append('Execution contract exceeds approved ' + field)
+        retries = contract.get('max_startup_retries', 0)
+        approved_retries = bounds.get('max_startup_retries', 0)
+        if (type(retries) is not int or type(approved_retries) is not int
+                or not 0 <= retries <= approved_retries <= 2
+                or (retries and contract.get('execution_policy') != 'isolated-checkout-v1')):
+            errors.append('Execution contract exceeds approved max_startup_retries')
         if (not isinstance(bounds.get('prerequisites'), dict)
                 or set(contract['prerequisites']) != set(bounds['prerequisites'])):
             errors.append('Execution prerequisite set differs from the approved package')
@@ -361,26 +435,29 @@ class Lifecycle:
     def assignment_authority_errors(self, assignment: dict) -> list[str]:
         """Rechecked for saved intents and already observed attempts on recovery."""
         with self.store._connection() as db:
-            _, contract = self._run(db, assignment['work_id'])
-            work = self.store._work(db, assignment['work_id'])
-            errors = self._approved_envelope_errors(db, assignment['work_id'], contract)
-            if (assignment['concept_revision'] != work['current_concept']
-                    or assignment['contract_revision'] != contract['revision']
-                    or assignment['concept_digest'] != contract['concept_digest']
-                    or assignment['requested_model'] != contract['model']
-                    or assignment['requested_effort'] != contract['effort']
-                    or assignment['executor'] != contract['assessor' if assignment['kind'] == 'assessment' else 'writer']
-                    or assignment['scope'] != canonical(assignment_scope(contract, assignment['kind']))):
-                errors.append('Saved assignment no longer matches the approved current contract')
-            if ((assignment.get('runtime_model') is not None and assignment['runtime_model'] != assignment['requested_model'])
-                    or (assignment.get('runtime_effort') is not None and assignment['runtime_effort'] != assignment['requested_effort'])):
-                errors.append('Observed runtime configuration is outside the approved envelope')
-            decision = db.execute("""SELECT 1 FROM decision d JOIN decision_readback r ON r.decision_id=d.decision_id
-                WHERE d.work_id=? AND d.concept_revision=? AND d.digest=? AND d.outcome='approved' AND r.status='verified'""",
-                (assignment['work_id'], contract['concept_revision'], contract['concept_digest'])).fetchone()
-            if not decision:
-                errors.append('Current exact approval readback is not verified')
-            return errors
+            return self._assignment_authority_errors_in(db, assignment)
+
+    def _assignment_authority_errors_in(self, db: sqlite3.Connection, assignment: dict) -> list[str]:
+        _, contract = self._run(db, assignment['work_id'])
+        work = self.store._work(db, assignment['work_id'])
+        errors = self._approved_envelope_errors(db, assignment['work_id'], contract)
+        if (assignment['concept_revision'] != work['current_concept']
+                or assignment['contract_revision'] != contract['revision']
+                or assignment['concept_digest'] != contract['concept_digest']
+                or assignment['requested_model'] != contract['model']
+                or assignment['requested_effort'] != contract['effort']
+                or assignment['executor'] != contract['assessor' if assignment['kind'] == 'assessment' else 'writer']
+                or assignment['scope'] != canonical(assignment_scope(contract, assignment['kind']))):
+            errors.append('Saved assignment no longer matches the approved current contract')
+        if ((assignment.get('runtime_model') is not None and assignment['runtime_model'] != assignment['requested_model'])
+                or (assignment.get('runtime_effort') is not None and assignment['runtime_effort'] != assignment['requested_effort'])):
+            errors.append('Observed runtime configuration is outside the approved envelope')
+        decision = db.execute("""SELECT 1 FROM decision d JOIN decision_readback r ON r.decision_id=d.decision_id
+            WHERE d.work_id=? AND d.concept_revision=? AND d.digest=? AND d.outcome='approved' AND r.status='verified'""",
+            (assignment['work_id'], contract['concept_revision'], contract['concept_digest'])).fetchone()
+        if not decision:
+            errors.append('Current exact approval readback is not verified')
+        return errors
 
     def _admission_errors(self, db: sqlite3.Connection, work_id: str) -> list[str]:
         run, contract = self._run(db, work_id)
@@ -396,7 +473,7 @@ class Lifecycle:
             errors.append('Current exact concept approval and verified decision readback required')
         if not contract['authority'] or not contract['qualified_route'] or not all(value is True for value in contract['prerequisites'].values()):
             errors.append('Authority, qualified route or a named prerequisite is unmet')
-        if run['control'] != 'none' or run['execution'] in ('cancelled', 'delivered'):
+        if run['control'] != 'none' or run['execution'] in TERMINAL_EXECUTIONS:
             errors.append('Execution control fences dispatch')
         if db.execute('SELECT 1 FROM lifecycle WHERE work_id<>? AND admitted=1', (work_id,)).fetchone():
             errors.append('Another execution project owns admission')
@@ -418,12 +495,55 @@ class Lifecycle:
                 return prior
             self._command_guard(db, work_id, expected_work_revision, expected_digest)
             run, contract = self._run(db, work_id)
+            if run['execution'] in TERMINAL_EXECUTIONS:
+                raise Rejected('terminal_execution', 'A terminal execution cannot be admitted again')
+            if run['execution'] == 'paused':
+                raise Rejected('execution_paused', 'Paused work requires explicit resume; admission cannot clear a pause')
             db.execute("DELETE FROM technical_blocker WHERE work_id=? AND code='admission'", (work_id,))
             errors = self._admission_errors(db, work_id)
+            if not errors and not run['admitted'] and contract.get('execution_policy') == 'isolated-checkout-v1':
+                from . import budgets
+                try:
+                    budget = budgets.approved_budget(contract, self.store.directory)
+                    recipe = contract.get('runtime_recipe', {})
+                    if (not isinstance(recipe, dict) or recipe.get('execution_policy') != 'isolated-checkout-v1'
+                            or not isinstance(recipe.get('source'), str) or not recipe['source']
+                            or digest(recipe) != contract.get('runtime_recipe_digest')
+                            or type(recipe.get('max_seconds')) is not int
+                            or not 1 <= recipe['max_seconds'] <= contract['max_seconds']):
+                        raise Rejected('runtime_capacity', 'Finish capacity requires the exact approved isolated-checkout recipe')
+                    count = db.execute('SELECT COUNT(*) FROM assignment WHERE work_id=?', (work_id,)).fetchone()[0]
+                    capacity = budgets.read_finish_capacity(self.store.directory / 'codex-runtime.sqlite3', budget,
+                        source=recipe['source'], max_repairs=contract['max_repairs'],
+                        max_seconds=recipe['max_seconds'], max_assignments=contract['max_assignments'],
+                        lifecycle_assignments=count, max_startup_retries=contract.get('max_startup_retries', 0),
+                        reviewed_host=reviewed_host(recipe))
+                    errors.extend(capacity['blockers'])
+                except (Rejected, KeyError, ValueError, TypeError) as error:
+                    errors.append('Finish-capacity check failed: ' + str(error))
             if errors:
                 self._block(db, work_id, 'admission', '; '.join(errors))
                 self._touch(db, work_id, 'admission_held', errors)
                 return self.store._record(db, operation_id, payload, {'work_id': work_id, 'execution': 'held', 'blockers': errors})
+            # A separately approved startup continuation preserves the failed
+            # assignment. Its immutable audit supplies one exact predecessor;
+            # the existing unique constraint records consumption, not a reset.
+            from .startup_resource_continuation import admission_predecessor
+            predecessor = admission_predecessor(db, work_id, contract)
+            if predecessor is not None:
+                prior_assignment = db.execute('SELECT * FROM assignment WHERE predecessor=?', (predecessor,)).fetchone()
+                if prior_assignment:
+                    if (prior_assignment['work_id'] != work_id or prior_assignment['kind'] != 'implementation'
+                            or prior_assignment['contract_revision'] != contract['revision']
+                            or prior_assignment['concept_revision'] != contract['concept_revision']
+                            or prior_assignment['concept_digest'] != contract['concept_digest']
+                            or prior_assignment['scope'] != canonical(assignment_scope(contract, 'implementation'))):
+                        raise Rejected('startup_continuation', 'The audited predecessor belongs to a different assignment')
+                    return self.store._record(db, operation_id, payload, {
+                        'work_id': work_id, 'execution': run['execution'],
+                        'assignment_id': prior_assignment['assignment_id'], 'continuation_already_admitted': True})
+                if self._enqueue(db, work_id, 'implementation', predecessor) is None:
+                    raise Rejected('startup_continuation', 'The unchanged cumulative assignment bound prevents this successor')
             for resource in contract['resources']:
                 db.execute('INSERT OR IGNORE INTO resource VALUES(?,?,NULL,?,?)', (resource, work_id, 'reserved', now()))
             db.execute("UPDATE lifecycle SET admitted=1,execution='eligible' WHERE work_id=?", (work_id,))
@@ -434,7 +554,7 @@ class Lifecycle:
 
     def _enqueue(self, db: sqlite3.Connection, work_id: str, kind: str, predecessor: str) -> str | None:
         run, contract = self._run(db, work_id)
-        if run['control'] != 'none' or run['execution'] in ('cancelled', 'delivered'):
+        if run['control'] != 'none' or run['execution'] in TERMINAL_EXECUTIONS:
             return None
         if db.execute('SELECT COUNT(*) FROM assignment WHERE work_id=?', (work_id,)).fetchone()[0] >= contract['max_assignments']:
             self._block(db, work_id, 'assignment_limit', 'Approved assignment limit exhausted', 'Return a bounded decision packet')
@@ -457,6 +577,16 @@ class Lifecycle:
         with self.store._connection() as db:
             where = "WHERE state NOT IN ('completed','failed','cancelled')" if unresolved else ''
             return [dict(r) for r in db.execute('SELECT * FROM assignment ' + where + ' ORDER BY created_at,assignment_id')]
+
+    @staticmethod
+    def _startup_retries_used_in(db: sqlite3.Connection, work_id: str) -> int:
+        return db.execute("SELECT COUNT(*) FROM assignment WHERE work_id=? AND predecessor LIKE 'startup-retry:%'",
+                          (work_id,)).fetchone()[0]
+
+    def startup_retries_used(self, work_id: str) -> int:
+        """Read retained retry consumption across all revisions, cycles and restarts."""
+        with self.store._connection() as db:
+            return self._startup_retries_used_in(db, work_id)
 
     def claim(self, assignment_id: str, epoch: int) -> dict | None:
         with self.store._transaction() as db:
@@ -550,7 +680,8 @@ class Lifecycle:
                        (assignment['attempt_id'], canonical(selected), now()))
             self._touch(db, saved['work_id'], 'runtime_observation', selected)
 
-    def _assessment_error(self, contract: dict, a: sqlite3.Row, result: dict) -> str | None:
+    def _assessment_error(self, contract: dict, a: sqlite3.Row, result: dict, *,
+                          recognized_failures: bool = False) -> str | None:
         if (result.get('candidate') != json.loads(a['candidate'])
                 or result.get('observed_source_identity') != json.loads(a['candidate'])['source_identity']):
             return 'Assessment identifies the wrong candidate'
@@ -580,7 +711,8 @@ class Lifecycle:
             if check.get('kind') is not None:
                 try:
                     validate_normalized(check)
-                    valid_result = (check['kind'] == expected_kind and evidence_passed(check, check.get('exit_code'))
+                    valid_result = (check['kind'] == expected_kind and
+                                    (self._recognized_check(check) if recognized_failures else evidence_passed(check, check.get('exit_code')))
                                     and bool(check.get('adapter')) and bool(check.get('output_sha256'))
                                     and bool(check.get('raw_outputs')))
                     if qualified is not None:
@@ -590,16 +722,369 @@ class Lifecycle:
                 except Rejected:
                     valid_result = False
             else:
-                valid_result = not typed and expected_kind == 'tests' and type(check.get('selected')) is int and check['selected'] > 0
-            if (check.get('result') != 'pass' or not valid_result
+                valid_result = not recognized_failures and not typed and expected_kind == 'tests' and type(check.get('selected')) is int and check['selected'] > 0
+            if (check.get('result') not in ({'pass', 'fail'} if recognized_failures else {'pass'}) or not valid_result
                     or not all(check.get(k) for k in ('command', 'environment', 'executor', 'output', 'scope', 'limits'))
                     or check.get('candidate') != result.get('candidate') or check['executor'] != contract['assessor']):
                 return 'A required check failed, was blocked/unrun, selected zero tests, lacked output or had wrong identity'
         return None
 
-    def complete(self, receipt_id: str, assignment_id: str, result: dict) -> dict:
+    @staticmethod
+    def _recognized_check(check: dict) -> bool:
+        """A completed native failure is evidence; interruption and missing tests are not."""
+        if (check.get('recognized') is not True or type(check.get('exit_code')) is not int
+                or check['exit_code'] < 0 or check.get('resource_failure') is not None):
+            return False
+        if check.get('result') == 'pass':
+            return evidence_passed(check, check['exit_code'])
+        return (check.get('result') == 'fail' and check['exit_code'] > 0
+                and (check.get('kind') == 'build' or check.get('selected', 0) > 0
+                     and check.get('failed', 0) + check.get('errors', 0) > 0))
+
+    @staticmethod
+    def _triage_events_in(db: sqlite3.Connection, work_id: str) -> list[dict]:
+        return [json.loads(row[0]) for row in db.execute(
+            "SELECT detail FROM lifecycle_event WHERE work_id=? AND kind='native_failure_triage' ORDER BY event_id",
+            (work_id,))]
+
+    def _verify_startup_link_in(self, db: sqlite3.Connection, current: dict, prior: sqlite3.Row,
+                                completion: sqlite3.Row, result: dict, receipt_id: str,
+                                contract: dict, depth: int) -> None:
+        observations = [json.loads(row[0]) for row in db.execute(
+            "SELECT detail FROM lifecycle_event WHERE work_id=? AND kind='startup_observation_received'",
+            (current['work_id'],))]
+        observations = [event['observation'] for event in observations
+                        if event.get('receipt_id') == receipt_id and event.get('assignment_id') == prior['assignment_id']]
+        links = [json.loads(row[0]) for row in db.execute(
+            "SELECT detail FROM lifecycle_event WHERE work_id=? AND kind='startup_retry'", (current['work_id'],))]
+        links = [event for event in links if event.get('receipt_id') == receipt_id
+                 and event.get('failed_assignment_id') == prior['assignment_id']
+                 and event.get('assignment_id') == current['assignment_id']]
+        if (depth == 2 or completion['disposition'] != 'startup_retry' or prior['kind'] != current['kind']
+                or any(prior[key] != current[key] for key in ('candidate', 'executor', 'scope'))
+                or len(observations) != 1 or len(links) != 1
+                or not _known_startup_failure(dict(prior), result, observations[0], receipt_id,
+                                             contract.get('runtime_recipe', {}))
+                or completion['fingerprint'] != digest([prior['assignment_id'], result, observations[0]])):
+            raise Rejected('assessment_context', 'Assessment startup retry lacks its exact affirmative evidence')
+
+    def _assessment_context_in(self, db: sqlite3.Connection, assignment: sqlite3.Row) -> dict:
+        """Derive triage only from an intact completion chain, never a requested role."""
+        run, contract = self._run(db, assignment['work_id'])
+        if assignment['kind'] != 'assessment':
+            raise Rejected('assessment_context', 'Only an exact assessment has an assessment purpose')
+        if not reviewed_host(contract.get('runtime_recipe', {})):
+            return {'purpose': 'assessment'}
+        if (self._assignment_authority_errors_in(db, dict(assignment))
+                or assignment['candidate'] != run['candidate'] or not assignment['candidate']):
+            raise Rejected('assessment_context', 'Assessment no longer binds the approved current frozen candidate')
+        return self._assessment_lineage_in(db, assignment, contract, run['cycle'])
+
+    def _assessment_lineage_in(self, db: sqlite3.Connection, assignment: sqlite3.Row, contract: dict, cycle: int) -> dict:
+        # This private derivation is also used after an exact accepted triage has
+        # authorized its current repair; it grants no fresh assessment authority.
+        current = dict(assignment)
+        for depth in range(3):
+            predecessor = current['predecessor']
+            retry = predecessor.startswith('startup-retry:')
+            prefix = 'startup-retry:' if retry else 'completion:'
+            if not predecessor.startswith(prefix):
+                requests = [json.loads(row[0]) for row in db.execute(
+                    "SELECT detail FROM lifecycle_event WHERE work_id=? AND kind='reassessment_requested'",
+                    (current['work_id'],))]
+                if (predecessor.startswith('reassessment:')
+                        and sum(event.get('assignment_id') == current['assignment_id'] for event in requests) == 1):
+                    return {'purpose': 'assessment'}
+                raise Rejected('assessment_context', 'Assessment has no intact original completion or reassessment request')
+            receipt_id = predecessor[len(prefix):]
+            completion = db.execute('SELECT * FROM completion WHERE receipt_id=?', (receipt_id,)).fetchone()
+            prior = db.execute('SELECT * FROM assignment WHERE assignment_id=?',
+                               (completion['assignment_id'],)).fetchone() if completion else None
+            if (prior is None or any(prior[key] != current[key] for key in
+                    ('work_id', 'concept_revision', 'concept_digest', 'contract_revision'))
+                    or prior['result'] != completion['result']):
+                raise Rejected('assessment_context', 'Assessment predecessor has inconsistent retained identity')
+            result = json.loads(completion['result'])
+            if retry:
+                self._verify_startup_link_in(db, current, prior, completion, result, receipt_id, contract, depth)
+                current = dict(prior)
+                continue
+            if completion['disposition'] != 'triage_required':
+                if completion['disposition'] != 'assessment_required' or prior['kind'] not in ('implementation', 'repair'):
+                    raise Rejected('assessment_context', 'Assessment predecessor does not authorize an assessment')
+                return {'purpose': 'assessment'}
+            events = [event for event in self._triage_events_in(db, current['work_id'])
+                      if event.get('receipt_id') == receipt_id
+                      and event.get('failed_assignment_id') == prior['assignment_id']
+                      and event.get('assignment_id') == current['assignment_id']]
+            if (prior['kind'] != 'assessment' or prior['state'] != 'failed'
+                    or any(prior[key] != current[key] for key in ('candidate', 'executor', 'scope'))
+                    or completion['fingerprint'] != digest([prior['assignment_id'], result])
+                    or len(events) != 1 or type(events[0].get('cycle')) is not int
+                    or events[0]['cycle'] != cycle
+                    or result.get('reviewed_host_validation', {}).get('phase') != 'native_failed'):
+                raise Rejected('assessment_context', 'Native failure triage has no intact exact completion')
+            candidate = json.loads(prior['candidate'])
+            origin = {'receipt_id': receipt_id, 'assignment_id': prior['assignment_id'],
+                      'attempt_id': prior['attempt_id'], 'work_id': prior['work_id'],
+                      'concept_revision': prior['concept_revision'], 'concept_digest': prior['concept_digest'],
+                      'contract_revision': prior['contract_revision'], 'candidate_identity': candidate['identity'],
+                      'source_identity': candidate['source_identity'], 'result_sha256': digest(result),
+                      'cycle': events[0]['cycle']}
+            return {'purpose': 'native_failure_triage', 'origin': origin, 'failure_result': result}
+        raise Rejected('assessment_context', 'Assessment startup retry chain exceeds the approved bound')
+
+    def assessment_context(self, assignment_id: str) -> dict:
+        """Read the saved assessment purpose and, for triage, its immutable failure evidence."""
+        with self.store._connection() as db:
+            assignment = db.execute('SELECT * FROM assignment WHERE assignment_id=?', (assignment_id,)).fetchone()
+            if assignment is None:
+                raise Rejected('assignment_not_found', 'Unknown assessment assignment')
+            return self._assessment_context_in(db, assignment)
+
+    def triage_context_for_repair(self, repair_assignment_id: str, triage_assignment_id: str) -> dict:
+        """Return historical failure evidence only for its exact currently authorized repair."""
+        with self.store._connection() as db:
+            repair = db.execute('SELECT * FROM assignment WHERE assignment_id=?', (repair_assignment_id,)).fetchone()
+            if repair is None:
+                raise Rejected('assignment_not_found', 'Unknown repair assignment')
+            run, contract = self._run(db, repair['work_id'])
+            if (repair['kind'] != 'repair' or repair['state'] not in ('proposed', 'sent', 'acknowledged', 'observed_active', 'waiting')
+                    or not reviewed_host(contract.get('runtime_recipe', {}))
+                    or self._assignment_authority_errors_in(db, dict(repair))
+                    or run['control'] != 'none' or run['execution'] in TERMINAL_EXECUTIONS
+                    or run['candidate'] is not None or repair['candidate'] is not None
+                    or not 1 <= run['cycle'] <= contract['max_repairs']):
+                raise Rejected('repair_evidence', 'Failure evidence requires the exact current approved correction')
+            current = dict(repair)
+            for depth in range(3):
+                retry = current['predecessor'].startswith('startup-retry:')
+                prefix = 'startup-retry:' if retry else 'completion:'
+                if not current['predecessor'].startswith(prefix):
+                    break
+                receipt_id = current['predecessor'][len(prefix):]
+                completion = db.execute('SELECT * FROM completion WHERE receipt_id=?', (receipt_id,)).fetchone()
+                prior = db.execute('SELECT * FROM assignment WHERE assignment_id=?',
+                                   (completion['assignment_id'],)).fetchone() if completion else None
+                if (prior is None or any(prior[key] != current[key] for key in
+                        ('work_id', 'concept_revision', 'concept_digest', 'contract_revision'))
+                        or prior['result'] != completion['result']):
+                    break
+                result = json.loads(completion['result'])
+                if retry:
+                    self._verify_startup_link_in(db, current, prior, completion, result, receipt_id, contract, depth)
+                    current = dict(prior)
+                    continue
+                if (prior['assignment_id'] != triage_assignment_id or prior['kind'] != 'assessment'
+                        or prior['state'] != 'failed' or completion['disposition'] != 'repair'
+                        or completion['fingerprint'] != digest([prior['assignment_id'], result])
+                        or self._assignment_authority_errors_in(db, dict(prior))):
+                    break
+                context = self._assessment_lineage_in(db, prior, contract, run['cycle'] - 1)
+                marker, reports = result.get('reviewed_host_validation', {}), result.get('initial_reports', {})
+                if (context['purpose'] != 'native_failure_triage' or marker.get('triage_origin') != context['origin']
+                        or marker.get('mode') != 'reviewed-host-v1' or marker.get('phase') != 'triage'
+                        or marker.get('review_verdict') != 'fail' or marker.get('review') != reports.get('review')
+                        or reports.get('independent') is not True or reports.get('execution') != []
+                        or result.get('checks') != [] or result.get('native_checks', []) != []
+                        or result.get('candidate') != json.loads(prior['candidate'])
+                        or result.get('observed_source_identity') != result['candidate']['source_identity']
+                        or result.get('executor') != prior['executor'] or result.get('status') != 'failed'
+                        or result.get('runtime_turn_status') != 'completed' or not stopped_with_effects(result)
+                        or result.get('resource_limits', {}).get('breach', 'unknown') is not None
+                        or not self._confirmed_review_finding(contract['runtime_recipe'], result)):
+                    break
+                return {**context, 'evidence_only': True, 'repair_assignment_id': repair_assignment_id,
+                        'triage_receipt_id': receipt_id}
+        raise Rejected('repair_evidence', 'Repair has no intact accepted triage and original failure handoff')
+
+    @staticmethod
+    def _confirmed_review_finding(recipe: dict, result: dict) -> bool:
+        finding, findings = result.get('finding'), result.get('review_findings')
+        if (not isinstance(finding, dict) or finding.get('confirmed') is not True or finding.get('in_scope') is not True
+                or not isinstance(findings, list) or not 1 <= len(findings) <= 16):
+            return False
+        summaries = []
+        for item in findings:
+            if (not isinstance(item, dict) or item.get('confirmed') is not True or item.get('in_scope') is not True
+                    or not isinstance(item.get('path'), str)
+                    or not changes_allowed(recipe, [item['path']])
+                    or any(not isinstance(item.get(key), str) or not item[key].strip()
+                           or len(item[key]) > 4096 for key in ('summary', 'evidence'))):
+                return False
+            summaries.append(item['path'] + ': ' + item['summary'])
+        summary = '\n'.join(summaries)
+        return len(summary) <= 8192 and finding.get('summary') == summary
+
+    def _reviewed_host_complete_in(self, db: sqlite3.Connection, run: sqlite3.Row, contract: dict,
+                                   a: sqlite3.Row, result: dict, receipt_id: str) -> str:
+        """Use the existing assessment/correction path, with one bounded failure diagnosis."""
+        work_id = a['work_id']
+        error, action = None, None
+        unknown = not stopped_with_effects(result)
+        try:
+            context = self._assessment_context_in(db, a)
+            marker = result.get('reviewed_host_validation', {})
+            reports = result.get('initial_reports', {})
+            report = reports.get('review')
+            candidate = json.loads(a['candidate'])
+            phase = marker.get('phase')
+            limits = result.get('resource_limits')
+            if unknown:
+                error = 'Reviewed host assessment does not prove stopped ownership and known effects'
+            elif (self._admission_errors(db, work_id) or self._assignment_authority_errors_in(db, dict(a))
+                    or db.execute("SELECT 1 FROM owned_stop WHERE work_id=? AND state<>'stopped'", (work_id,)).fetchone()
+                    or stop_conflicts_in(db, work_id)):
+                error = 'Current authority, control, ownership or an unresolved blocker prevents assessment progression'
+            elif (not isinstance(limits, dict) or 'breach' not in limits or limits['breach'] is not None):
+                error = 'Reviewed host assessment lacks a positive unchanged resource-limit observation'
+            elif (result.get('executor') != contract['assessor'] or result.get('executor') == contract['writer']
+                    or result.get('candidate') != candidate or a['candidate'] != run['candidate']
+                    or result.get('observed_source_identity') != candidate['source_identity']
+                    or result.get('runtime_turn_status') != 'completed'
+                    or marker.get('mode') != 'reviewed-host-v1' or reports.get('independent') is not True
+                    or not isinstance(report, dict) or not isinstance(report.get('path'), str) or not report['path']
+                    or not isinstance(report.get('sha256'), str) or len(report['sha256']) != 64
+                    or any(char not in '0123456789abcdef' for char in report['sha256'])
+                    or marker.get('review') != report or not isinstance(result.get('review_findings'), list)):
+                error = 'Reviewed host assessment lacks exact candidate, completed independent review or report binding'
+            elif context['purpose'] == 'native_failure_triage':
+                if (phase != 'triage' or marker.get('triage_origin') != context['origin']
+                        or context['origin']['cycle'] != run['cycle']
+                        or result.get('checks') != [] or reports.get('execution') != []
+                        or result.get('native_checks', []) != []):
+                    error = 'Failure triage cannot execute checks or escape its exact failed assessment'
+                elif (marker.get('review_verdict') != 'fail' or result.get('status') != 'failed'
+                      or not self._confirmed_review_finding(contract['runtime_recipe'], result)):
+                    error = 'Independent failure triage did not confirm an in-scope corrective finding'
+                else:
+                    action = 'repair'
+            elif 'triage_origin' in marker or phase not in ('review_rejected', 'native_failed', 'validated'):
+                error = 'Ordinary assessment cannot claim a failure-triage purpose'
+            elif phase == 'review_rejected':
+                if (result.get('checks') != [] or reports.get('execution') != [] or result.get('native_checks', []) != []
+                        or marker.get('review_verdict') != 'fail' or result.get('status') != 'failed'
+                        or not self._confirmed_review_finding(contract['runtime_recipe'], result)):
+                    error = 'Rejected source review needs a concrete in-scope finding and no native execution'
+                else:
+                    action = 'repair'
+            elif marker.get('review_verdict') != 'pass' or result['review_findings']:
+                error = 'Native validation requires an exact passing source review without findings'
+            else:
+                checks = result.get('checks', [])
+                if any(not isinstance(check.get('cleanup'), dict) or not stopped_with_effects(check['cleanup']) for check in checks):
+                    unknown = True
+                    error = 'A native check lacks positive owned-process cleanup and known effects'
+                elif (any(not isinstance(check.get('native_check_id'), str) or not check['native_check_id'] for check in checks)
+                      or len({check['native_check_id'] for check in checks}) != len(checks)
+                      or not isinstance(result.get('native_checks'), list)
+                      or sorted(result['native_checks']) != sorted(check['native_check_id'] for check in checks)):
+                    error = 'Native validation does not bind the exact distinct native check owners'
+                else:
+                    error = self._assessment_error(contract, a, result, recognized_failures=phase == 'native_failed')
+                if not error and reports.get('execution') != [check['output'] for check in checks]:
+                    error = 'Native execution report does not bind the complete exact check outputs'
+                if not error:
+                    if phase == 'native_failed':
+                        if result.get('status') != 'failed' or not any(c.get('result') == 'fail' for c in result['checks']):
+                            error = 'Failure triage requires a recognized completed native failure'
+                        else:
+                            action = 'triage_required'
+                    elif result.get('status') != 'completed':
+                        error = 'Native validation did not complete successfully'
+                    else:
+                        action = 'delivered'
+        except (Rejected, KeyError, TypeError, ValueError, AttributeError) as problem:
+            error = 'Reviewed host evidence is incomplete or inconsistent: ' + str(problem)
+        if not error and action in ('repair', 'triage_required'):
+            if run['cycle'] >= contract['max_repairs']:
+                error = 'Approved correction cycles are exhausted'
+            elif action == 'triage_required' and any(event.get('cycle') == run['cycle']
+                                                     for event in self._triage_events_in(db, work_id)):
+                error = 'This correction cycle already consumed its independent failure triage'
+        db.execute('UPDATE assignment SET state=?,terminal_at=?,result=? WHERE assignment_id=?',
+                   ('blocked_unknown_effects' if unknown else 'completed' if action == 'delivered' and not error else 'failed',
+                    now(), canonical(result), a['assignment_id']))
+        if error:
+            self._block(db, work_id, 'unknown_effects' if unknown else 'assessment_failed', error)
+            return 'held'
+        if action == 'repair':
+            db.execute('UPDATE lifecycle SET cycle=cycle+1,candidate=NULL WHERE work_id=?', (work_id,))
+            db.execute("UPDATE resource SET state='reserved',assignment_id=NULL,observed_at=? WHERE work_id=?", (now(), work_id))
+            return 'repair' if self._enqueue(db, work_id, 'repair', 'completion:' + receipt_id) else 'held'
+        if action == 'triage_required':
+            db.execute("UPDATE resource SET state='frozen',assignment_id=NULL,observed_at=? WHERE work_id=?", (now(), work_id))
+            successor = self._enqueue(db, work_id, 'assessment', 'completion:' + receipt_id)
+            if successor is None:
+                return 'held'
+            self._touch(db, work_id, 'native_failure_triage', {'receipt_id': receipt_id,
+                'failed_assignment_id': a['assignment_id'], 'assignment_id': successor,
+                'cycle': run['cycle'], 'charges_preserved': True})
+            return 'triage_required'
+        self._deliver_in(db, contract, a, result)
+        return 'delivered'
+
+    @staticmethod
+    def _deliver_in(db: sqlite3.Connection, contract: dict, a: sqlite3.Row, result: dict) -> None:
+        delivery = {'candidate': result['candidate'], 'accepted': True, 'committed': False, 'installed': False,
+                    'released': False, 'receiving_owner': contract['receiving_owner'], 'checks': result['checks'],
+                    'limits': 'Q2 bounded runtime candidate; desktop/archive qualification remains separate' if result.get('runtime_turn_id') else 'Q1 simulated acceptance only',
+                    'archive': 'local preparation pending; live publication unqualified',
+                    'accepted_at': now(), 'assessor': result['executor']}
+        db.execute("UPDATE lifecycle SET execution='delivered',admitted=0,delivery=? WHERE work_id=?", (canonical(delivery), a['work_id']))
+        db.execute('DELETE FROM resource WHERE work_id=?', (a['work_id'],))
+
+    def _startup_retry_in(self, db: sqlite3.Connection, run: sqlite3.Row, contract: dict,
+                          assignment: sqlite3.Row, result: dict, observation: dict | None,
+                          receipt_id: str) -> str | None:
+        limit = contract.get('max_startup_retries', 0)
+        work_id = assignment['work_id']
+        if (contract.get('execution_policy') != 'isolated-checkout-v1'
+                or type(limit) is not int or not 1 <= limit <= 2 or not run['admitted']
+                or self._startup_retries_used_in(db, work_id) >= limit
+                or not _known_startup_failure(dict(assignment), result, observation, receipt_id,
+                                               contract.get('runtime_recipe', {}))
+                or self._admission_errors(db, work_id)
+                or self._assignment_authority_errors_in(db, dict(assignment))
+                or assignment['candidate'] != run['candidate']
+                or db.execute("SELECT 1 FROM assignment WHERE work_id=? AND assignment_id<>? AND state NOT IN ('completed','failed','cancelled')",
+                              (work_id, assignment['assignment_id'])).fetchone()
+                or db.execute("SELECT 1 FROM owned_stop WHERE work_id=? AND state<>'stopped'", (work_id,)).fetchone()
+                or stop_conflicts_in(db, work_id)):
+            return None
+        try:
+            age = (datetime.now(timezone.utc) - datetime.fromisoformat(assignment['sent_at'])).total_seconds()
+        except (ValueError, TypeError):
+            return None
+        seconds = contract.get('runtime_recipe', {}).get('max_seconds')
+        if (type(seconds) is not int or not 1 <= seconds <= contract['max_seconds']
+                or not 0 <= age < seconds):
+            return None
+        resources = list(db.execute('SELECT * FROM resource WHERE work_id=?', (work_id,)))
+        if (set(row['resource_id'] for row in resources) != set(contract['resources'])
+                or any(row['assignment_id'] != assignment['assignment_id']
+                       or row['state'] != ('frozen' if assignment['kind'] == 'assessment' else 'owned') for row in resources)):
+            return None
+        successor = self._enqueue(db, work_id, assignment['kind'], 'startup-retry:' + receipt_id)
+        if successor is None:
+            return None
+        db.execute("UPDATE assignment SET state='failed',terminal_at=?,result=? WHERE assignment_id=?",
+                   (now(), canonical(result), assignment['assignment_id']))
+        db.execute("UPDATE outbox SET state='completed',updated_at=? WHERE assignment_id=?",
+                   (now(), assignment['assignment_id']))
+        db.execute('UPDATE resource SET state=?,assignment_id=NULL,observed_at=? WHERE work_id=?',
+                   ('frozen' if assignment['kind'] == 'assessment' else 'reserved', now(), work_id))
+        self._touch(db, work_id, 'startup_retry', {'receipt_id': receipt_id,
+                    'failed_assignment_id': assignment['assignment_id'], 'assignment_id': successor,
+                    'retry_number': self._startup_retries_used_in(db, work_id), 'limit': limit,
+                    'kind': assignment['kind'], 'cycle': run['cycle'], 'charges_preserved': True})
+        return successor
+
+    def complete(self, receipt_id: str, assignment_id: str, result: dict, *,
+                 startup_observation: dict | None = None) -> dict:
         identifier(receipt_id)
-        fingerprint = digest([assignment_id, result])
+        fingerprint = digest([assignment_id, result] if startup_observation is None else
+                             [assignment_id, result, startup_observation])
         with self.store._transaction() as db:
             prior = db.execute('SELECT * FROM completion WHERE receipt_id=?', (receipt_id,)).fetchone()
             if prior:
@@ -612,10 +1097,14 @@ class Lifecycle:
             run, contract = self._run(db, a['work_id'])
             work = self.store._work(db, a['work_id'])
             disposition = 'historical'
+            if startup_observation is not None:
+                self._touch(db, a['work_id'], 'startup_observation_received',
+                            {'receipt_id': receipt_id, 'assignment_id': assignment_id,
+                             'observation': startup_observation})
             current = (a['state'] in ('sent', 'acknowledged', 'observed_active', 'waiting')
                        and a['contract_revision'] == contract['revision'] and a['concept_revision'] == work['current_concept']
                        and a['concept_digest'] == contract['concept_digest'] and run['control'] == 'none'
-                       and run['execution'] not in ('cancelled', 'delivered'))
+                       and run['execution'] not in TERMINAL_EXECUTIONS)
             expired = (a['sent_at'] is not None and
                        (datetime.now(timezone.utc) - datetime.fromisoformat(a['sent_at'])).total_seconds() > contract['max_seconds'])
             if current and expired:
@@ -623,54 +1112,54 @@ class Lifecycle:
                 disposition = 'deadline_held'
                 current = False
             if current:
-                error = None
-                if db.execute('SELECT 1 FROM technical_blocker WHERE work_id=?', (a['work_id'],)).fetchone():
-                    error = 'An unresolved technical blocker prevents candidate acceptance or successor admission'
-                elif result.get('owned_processes') != [] or result.get('effects_reconciled') is not True or not partial_mutations_known(result):
-                    error = 'Runtime terminal result does not prove owned-process exit and mutation reconciliation'
-                elif result.get('executor') != a['executor'] or result.get('status') != 'completed':
-                    error = 'Assignment failed or the terminal receipt has the wrong executor'
-                elif a['kind'] == 'assessment':
-                    error = self._assessment_error(contract, a, result)
-                elif not result.get('candidate') or not all(result['candidate'].get(k) for k in ('identity', 'source_identity', 'inventory')):
-                    error = 'Implementation must freeze an exact candidate and source/new-file inventory'
-                effects_unknown = (result.get('owned_processes') != [] or result.get('effects_reconciled') is not True
-                                   or not partial_mutations_known(result))
-                db.execute('UPDATE assignment SET state=?,terminal_at=?,result=? WHERE assignment_id=?',
-                           ('blocked_unknown_effects' if effects_unknown else 'failed' if error else 'completed', now(), canonical(result), assignment_id))
-                if error:
-                    disposition = 'held'
-                    self._block(db, a['work_id'], 'unknown_effects' if effects_unknown else 'assessment_failed' if a['kind'] == 'assessment' else 'assignment_failed', error)
-                    finding = result.get('finding', {})
-                    reports = result.get('initial_reports', {})
-                    if (a['kind'] == 'assessment' and result.get('executor') == contract['assessor']
-                            and result.get('candidate') == json.loads(a['candidate'])
-                            and result.get('observed_source_identity') == json.loads(a['candidate'])['source_identity']
-                            and reports.get('execution') and reports.get('review') and reports.get('independent') is True
-                            and result.get('owned_processes') == [] and result.get('effects_reconciled') is True
-                            and partial_mutations_known(result) and finding.get('confirmed') is True and finding.get('in_scope') is True and finding.get('summary')):
-                        if run['cycle'] < contract['max_repairs']:
-                            db.execute('UPDATE lifecycle SET cycle=cycle+1,candidate=NULL WHERE work_id=?', (a['work_id'],))
-                            db.execute("DELETE FROM technical_blocker WHERE work_id=? AND code='assessment_failed'", (a['work_id'],))
-                            db.execute("UPDATE resource SET state='reserved',assignment_id=NULL,observed_at=? WHERE work_id=?", (now(), a['work_id']))
-                            self._enqueue(db, a['work_id'], 'repair', 'completion:' + receipt_id)
-                            disposition = 'repair'
-                        else:
-                            self._block(db, a['work_id'], 'repair_limit', 'At most two corrective cycles are authorized', 'Return findings in a focused decision packet')
-                elif a['kind'] in ('implementation', 'repair'):
-                    db.execute('UPDATE lifecycle SET candidate=? WHERE work_id=?', (canonical(result['candidate']), a['work_id']))
-                    db.execute("UPDATE resource SET state='frozen',assignment_id=NULL,observed_at=? WHERE work_id=?", (now(), a['work_id']))
-                    self._enqueue(db, a['work_id'], 'assessment', 'completion:' + receipt_id)
-                    disposition = 'assessment_required'
+                if self._startup_retry_in(db, run, contract, a, result, startup_observation, receipt_id) is not None:
+                    disposition = 'startup_retry'
+                elif a['kind'] == 'assessment' and reviewed_host(contract.get('runtime_recipe', {})):
+                    disposition = self._reviewed_host_complete_in(db, run, contract, a, result, receipt_id)
                 else:
-                    # Acceptance is exclusively the non-author assessor's qualified evidence.
-                    delivery = {'candidate': result['candidate'], 'accepted': True, 'committed': False, 'installed': False,
-                                'released': False, 'receiving_owner': contract['receiving_owner'], 'checks': result['checks'],
-                                'limits': 'Q2 bounded runtime candidate; desktop/archive qualification remains separate' if result.get('runtime_turn_id') else 'Q1 simulated acceptance only', 'archive': 'local preparation pending; live publication unqualified',
-                                'accepted_at': now(), 'assessor': result['executor']}
-                    db.execute("UPDATE lifecycle SET execution='delivered',admitted=0,delivery=? WHERE work_id=?", (canonical(delivery), a['work_id']))
-                    db.execute('DELETE FROM resource WHERE work_id=?', (a['work_id'],))
-                    disposition = 'delivered'
+                    error = None
+                    if db.execute('SELECT 1 FROM technical_blocker WHERE work_id=?', (a['work_id'],)).fetchone():
+                        error = 'An unresolved technical blocker prevents candidate acceptance or successor admission'
+                    elif result.get('owned_processes') != [] or result.get('effects_reconciled') is not True or not partial_mutations_known(result):
+                        error = 'Runtime terminal result does not prove owned-process exit and mutation reconciliation'
+                    elif result.get('executor') != a['executor'] or result.get('status') != 'completed':
+                        error = 'Assignment failed or the terminal receipt has the wrong executor'
+                    elif a['kind'] == 'assessment':
+                        error = self._assessment_error(contract, a, result)
+                    elif not result.get('candidate') or not all(result['candidate'].get(k) for k in ('identity', 'source_identity', 'inventory')):
+                        error = 'Implementation must freeze an exact candidate and source/new-file inventory'
+                    effects_unknown = (result.get('owned_processes') != [] or result.get('effects_reconciled') is not True
+                                       or not partial_mutations_known(result))
+                    db.execute('UPDATE assignment SET state=?,terminal_at=?,result=? WHERE assignment_id=?',
+                               ('blocked_unknown_effects' if effects_unknown else 'failed' if error else 'completed', now(), canonical(result), assignment_id))
+                    if error:
+                        disposition = 'held'
+                        self._block(db, a['work_id'], 'unknown_effects' if effects_unknown else 'assessment_failed' if a['kind'] == 'assessment' else 'assignment_failed', error)
+                        finding = result.get('finding', {})
+                        reports = result.get('initial_reports', {})
+                        if (a['kind'] == 'assessment' and result.get('executor') == contract['assessor']
+                                and result.get('candidate') == json.loads(a['candidate'])
+                                and result.get('observed_source_identity') == json.loads(a['candidate'])['source_identity']
+                                and reports.get('execution') and reports.get('review') and reports.get('independent') is True
+                                and result.get('owned_processes') == [] and result.get('effects_reconciled') is True
+                                and partial_mutations_known(result) and finding.get('confirmed') is True and finding.get('in_scope') is True and finding.get('summary')):
+                            if run['cycle'] < contract['max_repairs']:
+                                db.execute('UPDATE lifecycle SET cycle=cycle+1,candidate=NULL WHERE work_id=?', (a['work_id'],))
+                                db.execute("DELETE FROM technical_blocker WHERE work_id=? AND code='assessment_failed'", (a['work_id'],))
+                                db.execute("UPDATE resource SET state='reserved',assignment_id=NULL,observed_at=? WHERE work_id=?", (now(), a['work_id']))
+                                self._enqueue(db, a['work_id'], 'repair', 'completion:' + receipt_id)
+                                disposition = 'repair'
+                            else:
+                                self._block(db, a['work_id'], 'repair_limit', 'At most two corrective cycles are authorized', 'Return findings in a focused decision packet')
+                    elif a['kind'] in ('implementation', 'repair'):
+                        db.execute('UPDATE lifecycle SET candidate=? WHERE work_id=?', (canonical(result['candidate']), a['work_id']))
+                        db.execute("UPDATE resource SET state='frozen',assignment_id=NULL,observed_at=? WHERE work_id=?", (now(), a['work_id']))
+                        self._enqueue(db, a['work_id'], 'assessment', 'completion:' + receipt_id)
+                        disposition = 'assessment_required'
+                    else:
+                        # Acceptance is exclusively the non-author assessor's qualified evidence.
+                        self._deliver_in(db, contract, a, result)
+                        disposition = 'delivered'
                 if disposition != 'delivered' and run['execution'] != 'paused':
                     blocked = db.execute('SELECT 1 FROM technical_blocker WHERE work_id=?', (a['work_id'],)).fetchone()
                     db.execute('UPDATE lifecycle SET execution=? WHERE work_id=?', ('held' if blocked else 'eligible', a['work_id']))
@@ -689,7 +1178,12 @@ class Lifecycle:
         with self.store._transaction() as db:
             if prior := self.store._prior(db, operation_id, payload):
                 return prior
-            run, _ = self._run(db, work_id)
+            run, contract = self._run(db, work_id)
+            if run['execution'] in TERMINAL_EXECUTIONS:
+                raise Rejected('terminal_execution', 'A terminal execution cannot be reassessed')
+            if (reviewed_host(contract.get('runtime_recipe', {}))
+                    and any(event.get('cycle') == run['cycle'] for event in self._triage_events_in(db, work_id))):
+                raise Rejected('triage_consumed', 'This correction cycle already consumed its independent failure triage')
             if not run['candidate'] or run['control'] != 'none':
                 raise Rejected('no_frozen_candidate', 'Reassessment requires the retained frozen candidate')
             if db.execute("SELECT 1 FROM assignment WHERE work_id=? AND state NOT IN ('completed','failed','cancelled')", (work_id,)).fetchone():
@@ -713,7 +1207,7 @@ class Lifecycle:
                 return prior
             self._command_guard(db, work_id, expected_work_revision, expected_digest)
             run, _ = self._run(db, work_id)
-            if run['execution'] in ('cancelled', 'delivered'):
+            if run['execution'] in TERMINAL_EXECUTIONS:
                 raise Rejected('terminal_execution', 'Terminal execution cannot be resumed or changed')
             if action == 'pause':
                 db.execute("UPDATE lifecycle SET resume_execution=execution,execution='paused' WHERE work_id=?", (work_id,))

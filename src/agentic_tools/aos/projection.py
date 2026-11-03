@@ -155,8 +155,9 @@ def dashboard(snapshot: dict) -> dict:
         blockers.append({'title': 'Recovery copy is held', 'owner': 'coordinator',
                          'detail': 'This ledger is a recovery copy, not adopted execution authority. Runtime and shared-budget sidecars were not restored.',
                          'next_action': 'Use the original shared ledger; live adoption requires its separately authorized procedure.'})
+    retired = source['execution'] == 'retired'
     for name, satisfied in run.get('technical_prerequisites', {}).items():
-        if satisfied is not True:
+        if satisfied is not True and not retired:
             blockers.append({'title': 'Technical prerequisite: ' + name, 'owner': 'coordinator',
                              'detail': 'Named technical evidence is unmet; the saved concept decision is retained.',
                              'next_action': 'Reconcile this named fact before first admission; do not request unchanged approval again.'})
@@ -174,7 +175,7 @@ def dashboard(snapshot: dict) -> dict:
     if snapshot['collector']['health'] != 'current':
         blockers.append({'title': 'Source collection failed', 'owner': 'coordinator',
                          'detail': 'Retaining the last good source observation.', 'next_action': 'Restore collection and read back the source.'})
-    if snapshot['freshness']['worker']['health'] == 'stale':
+    if snapshot['freshness']['worker']['health'] == 'stale' and not retired:
         blockers.append({'title': 'Worker heartbeat is stale', 'owner': 'coordinator',
                          'detail': 'Service activity is unobserved; the recorded execution state does not prove a live worker.',
                          'next_action': 'Explicitly restart/reconcile exact saved ownership before further dispatch.'})
@@ -199,9 +200,10 @@ def dashboard(snapshot: dict) -> dict:
     current_nodes = [node(a, i) for i, a in enumerate(current)]
     if not current_nodes:
         current_nodes = [{'id': 'current-disposition', 'title': 'Current disposition', 'owner': 'coordinator',
-                          'status': 'accepted' if source['execution'] == 'delivered' else 'held',
+                          'status': 'retired' if retired else 'accepted' if source['execution'] == 'delivered' else 'held',
                           'summary': 'Concept ' + source['concept_decision'] + '; execution ' + source['execution'],
-                          'wait_reason': 'See named technical blockers and separate human decisions.',
+                          'wait_reason': ('Ownership released from verified current evidence; historical startup remains unknown.' if retired else
+                                          'See named technical blockers and separate human decisions.'),
                           'observed_at': source['updated_at'], 'depends_on': [], 'column': 0, 'row': 0, 'kind': 'action'}]
     entry = {'id': 'concept-entry', 'title': 'Concept decision', 'owner': 'human decision owner',
              'status': 'accepted' if source['concept_decision'] == 'approved' else 'held',
@@ -227,13 +229,15 @@ def dashboard(snapshot: dict) -> dict:
             'updated_at': source['updated_at'], 'observed_at': observed, 'collector': deepcopy(snapshot['collector']),
             'baseline_at': source['created_at'], 'completed_at': None,
             'current_stage': source['work_id'], 'stage_status': 'Concept ' + source['concept_decision'] + ' · Execution ' + source['execution'],
-            'attention_note': 'Approvals and execution holds are separate. Current data is a read-only service snapshot.',
+            'attention_note': ('Legacy ownership is retired. Historical startup remains unknown; no delivery was accepted.' if retired else
+                               'Approvals and execution holds are separate. Current data is a read-only service snapshot.'),
             'next': {'owner': current[0]['executor'] if current else 'coordinator',
-                     'action': 'Observe the saved assignment; independent review follows a frozen result.' if current else 'Reconcile disposition and remaining qualification.',
+                     'action': ('No execution remains for this retired work.' if retired else
+                                'Observe the saved assignment; independent review follows a frozen result.' if current else 'Reconcile disposition and remaining qualification.'),
                      'dependency': 'Current authority, checks, ownership and shared limits still apply.'},
             'candidate': (run.get('candidate') or {}).get('identity'),
-            'tasks': [{'id': 'workflow', 'title': 'Independent workflow acceptance',
-                       'status': 'accepted' if delivery else 'active' if current else 'held',
+            'tasks': [{'id': 'workflow', 'title': 'Legacy operational ownership' if retired else 'Independent workflow acceptance',
+                       'status': 'retired' if retired else 'accepted' if delivery else 'active' if current else 'held',
                        **({'accepted_at': source['updated_at']} if delivery else {})}],
             'history': [], 'decisions': decisions, 'blockers': blockers,
             'phase_flow': graph(current_nodes, 'current'), 'phase_graph': graph(history_nodes or current_nodes, 'history'),
