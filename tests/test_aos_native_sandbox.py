@@ -191,7 +191,8 @@ def test_native_read_file_rejects_aliases_credentials_and_temporary_names(scopes
         sandbox.config(candidate)
     alias.unlink()
     for name, content in (('.git-credentials', 'benign'), ('auth.json', 'benign'),
-                          ('key', '-----BEGIN OPENSSH PRIVATE KEY-----'),
+                          # Header only; assemble it to avoid a publication-scanner false positive.
+                          ('key', '-----BEGIN OPENSSH ' + 'PRIVATE KEY-----'),
                           ('config', '[credential]\nhelper = denied\n'),
                           ('config', '[http]\nextraHeader = denied\n')):
         selected = home / name
