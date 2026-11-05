@@ -7,6 +7,7 @@ Provide this contract together with exactly one kickoff: bug-fix, feature-change
 - Work ID / contract revision:
 - Workflow: [bug-fix / feature-change / new-product]
 - Assurance: [lightweight / standard / elevated; coordinator records rationale]
+- Execution route: [direct coordination for new ordinary feature work / explicitly selected AOS with rationale]; retain an active project's accepted route.
 - Accountable coordinator / feature owner:
 - Repository / source baseline / unrelated work to preserve:
 - User problem and one before/after example:
@@ -16,6 +17,7 @@ Provide this contract together with exactly one kickoff: bug-fix, feature-change
 - Decision-owner explanation: use `decision-brief.md` for each needed choice; retain the exact approval boundary and visible limits.
 - Authority: local edits [scope]; commits [yes/no]; branch [name/none]; push/PR [yes/no]; install/deploy [scope/none]; external publication [destination/audience/none]; recurring monitoring [scope/none]. Unset fields grant no additional authority; continue unaffected authorized work.
 - Environment / native check recipes / relevant requirement-source versions:
+- Setup evidence before Concept Approval: [applicable instruction/runtime versions; complete reviewer baseline access; native tools; output/resource ownership; delivery path; unresolved prerequisites]. Inspect within existing investigation authority. For AOS include supported readiness, live decision ownership and planned correction/reassessment capacity; setup evidence is not feature acceptance.
 - Shared resources / exclusive executor / recovery and release condition:
 - Affected maintained documentation / native generation/checks:
 - Optional dashboard, Journalist, full retrospective or additional outputs: [selected scope/none]
@@ -36,7 +38,7 @@ Provide this contract together with exactly one kickoff: bug-fix, feature-change
 5. Retain executed command, environment, executor, candidate, result, selected scope, output reference and coverage limit. Zero selected tests is not a passing suite. Separate model, integration and physical-input evidence. Preserve failed attempts and corrections.
 6. Keep factual review packets and reachable helpers free of peer conclusions before independent initials. Exchange concrete findings afterward. Accepting a shared-contract defect triggers a bounded direct-consumer sweep.
 7. Consume each completion, record disposition/release and dispatch the next ready authorized assignment. Record sent, acknowledged and observed-active separately. A wait names its dependency/owner; unknown remains unknown. Documentation blocks only named dependent transitions.
-8. Keep a versioned decision record. Material behavior, acceptance, environment, authority, assurance, staffing envelope or budget changes receive a focused decision when needed. Routine corrections and reassignments within the approved envelope continue with recorded changes. Do not reopen settled approvals or infer approval from silence. Retain original evidence as historical when its conditions change.
+8. Keep a versioned decision record. Material behavior, acceptance, environment, authority, assurance, staffing envelope or budget changes receive a focused decision when needed. Routine corrections and reassignments within the approved envelope continue with recorded changes. This includes formatting, in-scope fixes, review retries, affected checks and installation to an already authorized target while acceptance, permissions and remaining bounds still cover them. Before asking again, read the prior authorization and name the exact change and applicable rule requiring another decision; explain these in the final response as well as progress updates. AOS saved-decision gates, ownership holds and exhausted limits still apply; never fabricate approval, reset charges or change routes to evade them. Do not reopen settled approvals or infer approval from silence. Retain original evidence as historical when its conditions change.
 9. Close only the agreed delivery: real user outcome, final identity, affected documentation, required findings/checks and selected outputs. State accepted/committed/installed/released separately, name limitations and receiving ownership, and record proportionate learning plus any selected follow-up actions.
 
 ## Compact task and evidence records

@@ -10,6 +10,8 @@ Choose by the work's purpose, then let the coordinator recommend assurance from 
 | An existing product needs changed behavior | [Feature-change kickoff](downloads/feature-change-kickoff.txt) | Project/team introduction, then an impact/design DI for Concept Approval |
 | A new product needs discovery and feasibility | [New-product kickoff](downloads/new-product-kickoff.txt) | Project/team introduction, bounded discovery and a first-release Concept Approval |
 
+For a new ordinary feature, use direct coordination under the shared contract. Select AOS explicitly when durable service-owned execution is required and agreed; using independent agents does not require AOS. Keep the selected assessment, native checks and delivery requirements in either route.
+
 For a task already using the full feature package, use the [extended recipe](extended-feature-start.md). Do not silently replace an active project's acceptance or authority with a different workflow.
 
 ## 2. Fill the shared brief
@@ -22,7 +24,9 @@ Choose local edits, Git actions, installation/deployment and external publicatio
 
 Before investigation, the coordinator shows the phases/dependencies, initial/provisional team, responsibility grades, proposed models/effort and investigation bounds. Record lightweight, standard or elevated assurance and why. Roles are responsibilities; separate workers exist for useful independent work, not a fixed crew size.
 
-Present a proportionate DI with solution, tests/acceptance, ordered plan, team and execution limits. Obtain explicit user Concept Approval for its exact revision before implementation; a broad repair request does not waive it. Record an existing exact-package approval or explicit task-specific waiver once. After approval, confirm the actual execution team and proceed within its approved envelope. Material changes receive a focused decision.
+Before presenting the DI, check the selected route's setup within existing investigation authority: applicable instructions/runtime versions, complete baseline access for the reviewer, native tool availability and the intended delivery path. For AOS, also establish supported readiness, decision-service ownership and proposed capacity for the planned correction/reassessment path. Report unresolved prerequisites; setup checks do not prove the feature works.
+
+Present a proportionate DI with solution, tests/acceptance, ordered plan, team and execution limits. Obtain explicit user Concept Approval for its exact revision before implementation; a broad repair request does not waive it. Record an existing exact-package approval or explicit task-specific waiver once. After approval, confirm the actual execution team and proceed within its approved envelope. Material changes receive a focused decision. Before asking again, cite the existing authorization, the exact proposed change and the rule that prevents continuation. Routine corrections, formatting, review retries, affected checks and installation to the already authorized target continue within the same scope and still-valid bounds. Explain any necessary decision in the final response as well as progress updates.
 
 ## 4. Execute and accept a useful increment
 

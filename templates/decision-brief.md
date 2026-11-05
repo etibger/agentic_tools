@@ -2,6 +2,8 @@
 
 Use this short brief for a decision the user actually needs to make. Fill every field in plain language; use “none” or “unknown” with a reason when appropriate. Explain project terms. Keep material limits visible. Reading or preparing this template grants no authority.
 
+Before preparing a new request, read the user's existing authorization and the actual blocker. If the proposed action is already covered by the accepted scope, permissions and remaining bounds, record that basis and continue. For a necessary follow-up, state the prior approval, exactly what changed, and cite the rule requiring a new answer. A tool failure alone is not a new decision. Required AOS saved decisions and exhausted allowances remain enforced. Explain the reason and provide the usable action in the final response as well as progress updates; an unchanged pending decision keeps its existing identity.
+
 - **Requested action:** [One sentence describing the exact choice and affected scope.]
 - **Observed problem:** [What happens today; say whether this was observed in real use, in a simulation, or is a concern yet to be tested.]
 - **Practical example:** [One concrete before/after example the decision owner can recognize.]

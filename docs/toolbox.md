@@ -18,6 +18,12 @@ The approved [AOS investigation and Concept Approval package](aos-concept.md) de
 
 A bug report with ambiguous intended behavior starts with investigation. If resolution changes the agreed behavior, record that decision and continue as a feature change. Product discovery may stop, defer or narrow the proposal before implementation. A new-product workflow reuses the feature workflow for delivery increments; it does not create a competing development process.
 
+## Choose execution separately
+
+For new ordinary feature work, start with direct coordination under the shared work contract. Keep one product writer, the selected independent assessment, native checks and the authorized delivery. Select AOS explicitly when durable service-owned execution is part of the agreed requirement; available tools or a multi-agent team do not select that route. These defaults do not migrate an active project or waive its accepted process.
+
+Before Concept Approval, inspect the selected route within existing investigation authority: applicable instruction/runtime versions, the reviewer's access to the complete source baseline and planned candidate evidence path, native tools, output/resource ownership and delivery destination. AOS additionally needs supported readiness, a live decision route with a named owner, and capacity for the planned correction and reassessment path. Record versions and unresolved prerequisites; bind and check the final candidate evidence again after implementation. Do not freeze away newly applicable user instructions, infer new permissions, or call setup evidence feature validation.
+
 ## Choose assurance independently
 
 | Profile | Suitable context | Minimum assessment |
@@ -50,6 +56,10 @@ Keep the record in the task's approved working location. A small task can use a 
 Every new project starts with a proportionate Detailed Investigation and explicit user Concept Approval before implementation. Present observed behavior, the proposed solution and alternatives, test strategy and acceptance, ordered plan, team/model settings, resource boundaries, estimates/uncertainty and stop conditions. Bind the decision to the exact package revision and record the user's answer once. A broad repair request is not a waiver; only an explicit task-specific waiver can replace this gate. An existing approval for that exact package need not be repeated. Silence and elapsed time never count as approval.
 
 Investigation and explicitly bounded feasibility probes may proceed within their stated authority before Concept Approval. Routine implementation and corrections within an approved concept continue autonomously. Material changes to behavior, acceptance, authority, assurance, staffing envelope or budget receive a focused decision; retain settled approvals and unaffected work.
+
+Before requesting another decision, read the existing authority and the actual blocker. Formatting, in-scope fixes, review retries, affected checks and delivery to an already authorized target are routine when acceptance, permissions and remaining bounds still cover them. A failed tool or elapsed estimate alone does not create a new user decision. Preserve every failure and charge; an exhausted time, resource or assignment limit remains a stop condition.
+
+A necessary follow-up decision identifies the prior approval, exactly what changed, the applicable rule requiring a new answer and the concrete action the user can take. Explain it in the final response, not only a progress update. An AOS binding mismatch still requires its supported recovery/decision route; do not manufacture a saved decision or change routes to evade an unresolved ownership hold or exhausted allowance. Restore an unchanged pending decision through the supported route instead of preparing a duplicate.
 
 Each task has an owner, deliverable, prerequisites, mutation/resource boundary and exit evidence. States distinguish ready, assigned, acknowledged, active, waiting, done and failed; unknown observations remain unknown. A sent assignment is not observed activity. A completed assessment is not accepted behavior.
 
