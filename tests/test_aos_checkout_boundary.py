@@ -1373,3 +1373,53 @@ def test_reviewed_host_ownership_rejects_unqualified_platform(setup, monkeypatch
     monkeypatch.setattr(native_processes.sys, 'platform', 'linux')
     with pytest.raises(ValueError, match='Reviewed host ownership is qualified only on macOS'):
         native_processes.validate(recipe)
+
+
+@pytest.mark.parametrize('count', [16, 18, 32])
+@pytest.mark.parametrize('assessment,native', [(False, False), (True, False), (False, True)])
+def test_bounded_extra_protections_only_add_denies(setup, count, assessment, native):
+    recipe, state, home = setup
+    before = boundary.profile(recipe, state, assessment=assessment, native=native)
+    original = list(recipe['checkout_policy']['protected_roots'])
+    added = [str(state.parent / ('retained-control-' + str(i))) for i in range(count - len(original))]
+    recipe['checkout_policy']['protected_roots'] += added
+    actual = boundary.profile(recipe, state, assessment=assessment, native=native)
+    assert actual == {**before, **{path: 'deny' for path in added}}
+    assert actual[str(home / '.codex')] == 'deny'
+    assert recipe['checkout_policy']['protected_roots'] == original + added
+
+
+def test_protected_roots_over_finite_bound_still_rejected(setup):
+    recipe, state, _ = setup
+    recipe['checkout_policy']['protected_roots'] = [str(state.parent / ('guard-' + str(i))) for i in range(33)]
+    with pytest.raises(Rejected, match='at most 32'):
+        boundary.profile(recipe, state)
+
+
+@pytest.mark.parametrize('target', ['source', 'outputs'])
+def test_extra_protections_never_reopen_conflicting_grants(setup, target):
+    recipe, state, _ = setup
+    recipe['checkout_policy']['protected_roots'] += [str(state.parent / ('guard-' + str(i))) for i in range(15)]
+    recipe['checkout_policy']['protected_roots'].append(recipe[target])
+    with pytest.raises(Rejected, match='overlap authoritative'):
+        boundary.profile(recipe, state)
+
+
+def test_relocated_readiness_retains_all_original_and_derived_guards(setup):
+    from agentic_tools.aos import readiness
+    recipe, state, _ = setup
+    old = state.parent / 'original-readiness'
+    protected = [str(state), str(old / 'control'), str(old / 'runtime')]
+    protected += [str(state.parent / ('retained-' + str(i))) for i in range(12)]
+    recipe['checkout_policy']['protected_roots'] = protected
+    current = state.parent / 'supplemental-readiness'
+    output = current / 'outputs' / 'readiness-1' / 'implementation'
+    output.mkdir(parents=True)
+    scoped = readiness._scoped(recipe, output, (state, current / 'control', current / 'runtime'))
+    assert len(scoped['checkout_policy']['protected_roots']) == 17
+    expected = set(protected) | {str(current / 'control'), str(current / 'runtime')}
+    assert set(scoped['checkout_policy']['protected_roots']) == expected
+    actual = boundary.profile(scoped, state)
+    assert all(actual[path] == 'deny' for path in expected)
+    assert actual[str(output)] == 'write'
+    assert recipe['checkout_policy']['protected_roots'] == protected

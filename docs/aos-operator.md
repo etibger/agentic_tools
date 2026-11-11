@@ -641,10 +641,16 @@ are bound to the new saved decision before metadata qualification.
 The operator sequence is:
 
 1. Run `prepare-predispatch-recovery --request FILE` against freshly read status.
-   Preparation retains an immutable packet, its exact `concept` request and one
+   Preparation first constructs the exact metadata and permission-probe profiles
+   at the intended readiness output paths. This static preflight launches no
+   process and creates no output directory; it checks the actual path and policy
+   limits rather than a reduced fixture profile. Its complete deterministic plan
+   is bound in the packet and checked again before a metadata reservation and
+   before application. Any profile, source, configuration or path drift holds.
+   Preparation then retains an immutable packet, its exact `concept` request and one
    durable recovery intent for the work. It leaves the registered contract and
    work revision unchanged and runs no metadata, model turn, native check or VM
-   operation. This is the single supplemental recovery intent for that work;
+   operation. This is the original supplemental recovery intent for that work;
    choose the complete reviewed proposal before preparing it.
 2. Present `packet.concept` through `present-concept`, then use
    `prepare-decision` and the ordinary human decision page. Do not substitute
@@ -688,6 +694,27 @@ Metadata failure or interruption consumes the reserved supplemental attempt;
 neither a new directory nor a new operation ID creates a replacement allowance.
 An uncertain reservation or incomplete cleanup remains a hold. Preserve the
 evidence and resolve the reported condition through a supported operation.
+
+One narrowly bounded successor is available for a terminal metadata failure
+before either role starts: the failed result must retain zero roles, no native
+phase, zero model turns or product reservations, and positively verified cleanup.
+A successful, interrupted, applied, or uncertain predecessor is ineligible.
+Use the same preparation command with `predecessor` containing exact `packet`
+and `qualification` file references (`path` and `sha256`) and the preserved
+failed engine's `engine_directory`. The request's decision, digest and work
+revision identify the current approved but unapplied proposal. The original
+amendment and source-change baseline still identify the registered contract;
+these are distinct authorities and must not be conflated.
+
+The successor has a new operation ID, separate output namespace, and a new
+ordinary saved decision before its one additional metadata attempt. A separate
+immutable successor intent retains the original intent, failed journal, consumed
+attempt and saved decision unchanged. There is at most one successor, with no
+branch or successor-of-successor. Its unmaterialized runtime slots and effective
+ceiling must exactly carry forward the predecessor's prospective grant; they are
+not added again. The accounting origin, charges, deadline, product allowance and
+held state remain unchanged. Static preflight must pass on the exact successor
+profile before presentation; passing it is not actual metadata or runtime proof.
 
 Passing isolated regression tests proves the tooling behavior exercised by
 those tests. A passing supplemental metadata attempt proves only metadata

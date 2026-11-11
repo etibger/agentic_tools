@@ -59,7 +59,8 @@ class Fixture:
             'probe_interpreter': str(Path(sys.executable).resolve()), 'requires_detached_processes': False,
             'native_process_ownership': 'host-owned-v1', 'implementation_prompt': 'Fixture writer', 'assessment_prompt': 'Fixture reviewer',
             'checks': [{'name': 'fixture', 'argv': ['python', '-m', 'pytest'], 'scope': 'Fixture', 'timeout_seconds': 600}],
-            'checkout_policy': {'change_roots': ['fixture.py', *self.EXTRA_SOURCE], 'protected_roots': [], 'native_validation': 'reviewed-host-v1'},
+            'checkout_policy': {'change_roots': ['fixture.py', *self.EXTRA_SOURCE], 'protected_roots': [], 'native_validation': 'reviewed-host-v1',
+                'endpoint_limits': {'minimum_free_bytes': 1, 'max_owned_growth_bytes': 10000, 'max_output_bytes': 10000}},
             'instruction_manifest': instructions.discover(self.source)}
         self.readiness = self.private / 'readiness'; self.readiness.mkdir(mode=0o700)
         (self.readiness / 'control').mkdir(mode=0o700)

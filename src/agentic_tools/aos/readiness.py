@@ -16,6 +16,7 @@ import sqlite3
 import sys
 import threading
 import time
+import tomllib
 from importlib.metadata import version
 from pathlib import Path
 from types import SimpleNamespace
@@ -23,7 +24,7 @@ from types import SimpleNamespace
 from codex_cli_bin import bundled_codex_path
 
 from . import checkout_boundary, instructions, native_paths, native_processes
-from .checks import adapter_for, source_digest
+from .checks import adapter_for, source_digest, validate_descriptors
 from .codex_runtime import CodexRuntime, PIN, StdioRPC, inventory, process_groups
 from .store import Rejected, canonical, digest, identifier, now
 from agentic_tools.check_adapters import identities as adapter_identities
@@ -96,12 +97,117 @@ def _normalise(recipe: dict, state: Path) -> dict:
     return result
 
 
-def _scoped(recipe: dict, output: Path, controls: tuple[Path, ...]) -> dict:
+def _scoped(recipe: dict, output: Path, controls: tuple[Path, ...], *, planned_outputs: bool = False) -> dict:
     result = copy.deepcopy(recipe)
     policy = result['checkout_policy']
     # Protect both journals before preparing any remapped owned XDG directories.
     policy['protected_roots'] = sorted(set(policy.get('protected_roots', [])) | {str(p) for p in controls})
+    if planned_outputs:
+        return checkout_boundary.scoped_outputs(result, output, planned_outputs=True)
     return checkout_boundary.scoped_outputs(result, output, prepare=True)
+
+
+def _overrides_digest(overrides: list[str]) -> str:
+    """Fingerprint values without changing CLI key spelling or precedence.
+
+    Runtime permission maps contain sets, so equivalent inline TOML tables may
+    be rendered in different orders between processes. Parse only each RHS:
+    the pinned CLI's key-path grammar is not the TOML key grammar. The exact
+    argument sequence (including repeated keys) and every raw LHS stay bound.
+    """
+    if not isinstance(overrides, list):
+        raise Rejected('readiness_overrides', 'Preflight overrides must be an ordered argument list')
+    values = []
+    try:
+        for argument in overrides:
+            if not isinstance(argument, str):
+                raise ValueError('Non-string override')
+            path, separator, raw = argument.partition('=')
+            if not separator or not path or any(char in path for char in '\x00\r\n'):
+                raise ValueError('Invalid override key')
+            parsed = tomllib.loads('value=' + raw)
+            if set(parsed) != {'value'}:
+                raise ValueError('Override contains additional TOML entries')
+            values.append({'path': path, 'value': parsed['value']})
+        return digest(values)
+    except (ValueError, TypeError) as error:
+        raise Rejected('readiness_overrides', 'Preflight override values must be complete supported TOML values') from error
+
+
+def preflight_metadata(recipe: dict, *, state_dir: Path, readiness_dir: Path,
+                       model: str, effort: str, max_seconds: int = 300,
+                       max_attempts: int = 2, native_checks=(), run_id: str = 'readiness-1') -> dict:
+    """Plan exact metadata roles and probe profiles without any execution.
+
+    No directory, journal, reservation, process, probe or model call is created.
+    This is static configuration evidence, not host readiness or permission
+    qualification. Runtime repeats every check against then-current files.
+    The caller binds this plan to approval and re-evaluates it before reserving
+    an attempt; a matching plan still cannot replace actual metadata readiness.
+    """
+    if (type(max_seconds) is not int or not 30 <= max_seconds <= 3600
+            or type(max_attempts) is not int or not 1 <= max_attempts <= 10
+            or not isinstance(model, str) or not model.strip()
+            or not isinstance(effort, str) or not effort.strip()):
+        raise Rejected('readiness_bounds', 'Explicit finite readiness time, attempts, model and effort required')
+    if not isinstance(native_checks, (tuple, list)) or native_checks:
+        raise Rejected('readiness_checks', 'Metadata preflight cannot request native execution')
+    if run_id not in {'readiness-' + str(n) for n in range(1, max_attempts + 1)}:
+        raise Rejected('readiness_scope', 'Preflight must name one exact bounded readiness run')
+    state = _canonical_directory(state_dir)
+    directory = checkout_boundary._output_directory(str(readiness_dir), planned=True)
+    base = _normalise(recipe, state)
+    if not checkout_boundary.reviewed_host(base):
+        raise Rejected('readiness_policy', 'Metadata preflight requires reviewed-host-v1')
+    interpreter = base.get('probe_interpreter')
+    if (not isinstance(interpreter, str) or not Path(interpreter).is_absolute()
+            or not Path(interpreter).is_file()
+            or Path(interpreter).resolve() != Path(sys.executable).resolve()):
+        raise Rejected('readiness_interpreter', 'Metadata-only readiness requires the exact worker Python interpreter')
+    roots = [Path(base['source']), Path(base['outputs']), *native_paths.writable_roots(base), state]
+    if any(native_paths.overlaps(directory, root) for root in roots):
+        raise Rejected('readiness_scope', 'Private readiness controls must be outside product state and writable roots')
+    # Reuse the maintained native schema without constructing a runtime or
+    # touching its journal. The checks stay unexecuted in metadata-only mode.
+    validate_descriptors(base.get('checks'), base['max_seconds'])
+    native_processes.validate(base)
+    control = directory / 'control' / run_id
+    runtime = object.__new__(CodexRuntime)
+    runtime.directory = state
+    native_overrides, native_profile = runtime._profile(base, assessment=True, native=True)
+    roles = []
+    for role in ('implementation', 'assessment'):
+        output = directory / 'outputs' / run_id / role
+        scoped = _scoped(base, output, (state, control.parent, directory / 'runtime'), planned_outputs=True)
+        # checkout_runtime._probe adds the exact run control to the already
+        # scoped role. Include that extra deny before checking cardinality and
+        # profile validity, not merely the earlier role-level configuration.
+        probe = copy.deepcopy(scoped)
+        guards = probe['checkout_policy'].get('protected_roots', [])
+        probe['checkout_policy']['protected_roots'] = sorted(set(guards) | {str(state), str(control)})
+        probe = checkout_boundary.scoped_outputs(probe, output, planned_outputs=True)
+        profiles = []
+        for phase, selected in (('metadata', scoped), ('permission-probe', probe)):
+            for after_startup in (False, True):
+                overrides, profile = runtime._profile(selected, assessment=role == 'assessment',
+                    after_startup=after_startup, planned_outputs=True)
+                profiles.append({'phase': phase, 'after_startup': after_startup,
+                    'recipe_digest': digest(selected), 'protected_roots': selected['checkout_policy']['protected_roots'],
+                    'overrides_digest': _overrides_digest(overrides), 'profile': profile, 'profile_digest': digest(profile)})
+        roles.append({'role': role, 'model': model, 'effort': effort, 'output': str(output), 'profiles': profiles})
+    result = {'format': 'aos-metadata-preflight-v1', 'recipe_digest': digest(base),
+        'instruction_manifest_digest': digest(base['instruction_manifest']),
+        'runtime_source_digest': source_digest(), 'state_dir': str(state),
+        'readiness_dir': str(directory), 'run_id': run_id,
+        'limits': {'max_seconds': max_seconds, 'max_attempts': max_attempts},
+        'native_schema_digest': digest({key: base.get(key) for key in (
+            'checks', 'native_process_ownership', 'native_write_roots', 'native_protected_paths', 'probe_interpreter')}),
+        'native_profile_schema': {'profile': native_profile, 'profile_digest': digest(native_profile),
+            'overrides_digest': _overrides_digest(native_overrides), 'execution': 'not_requested',
+            'scope': 'Static native schema only; actual native execution retains its separate approval and qualification gates.'},
+        'roles': roles, 'runtime_qualified': False,
+        'scope': 'Static exact metadata and permission-profile plan; no process, model, probe, directory, journal or reservation.'}
+    return {**result, 'plan_digest': digest(result)}
 
 
 def _remaining(deadline: float, *, reserve: float = 0) -> float:

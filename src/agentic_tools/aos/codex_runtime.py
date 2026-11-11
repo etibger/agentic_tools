@@ -1203,11 +1203,12 @@ class CodexRuntime:
         return checkout_boundary.scoped_outputs(scoped, selected, prepare=True)
 
     def _profile(self, recipe: dict, assessment: bool = False, *, after_startup: bool = False,
-                 native: bool = False) -> tuple[list[str], dict]:
+                 native: bool = False, planned_outputs: bool = False) -> tuple[list[str], dict]:
         if 'model_write_scope' in recipe and recipe['model_write_scope'] != 'existing-mutable-files':
             raise Rejected('runtime_scope', 'Unsupported model write scope')
         isolated = checkout_boundary.enabled(recipe)
-        filesystem = (checkout_boundary.profile(recipe, self.directory.resolve(), assessment, native) if isolated else
+        boundary_options = {'planned_outputs': True} if planned_outputs else {}
+        filesystem = (checkout_boundary.profile(recipe, self.directory.resolve(), assessment, native, **boundary_options) if isolated else
                       {':root': 'deny', ':minimal': 'read', recipe['source']: 'read' if assessment else 'write',
                        recipe['outputs']: 'write'})
         if not isolated:

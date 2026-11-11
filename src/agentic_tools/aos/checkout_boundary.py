@@ -103,8 +103,11 @@ def _config(recipe: dict) -> dict:
             or any(type(n) is not int or not 0 < n <= 2**63 - 1 for n in limits.values())):
         _reject('Endpoint limits require three positive bounded byte counts')
     extra = value.get('protected_roots', [])
-    if not isinstance(extra, list) or len(extra) > 16 or not all(isinstance(p, str) for p in extra):
-        _reject('Protected roots require at most 16 exact paths')
+    # Derived metadata/probe scopes retain the approved denies and append exact
+    # private control roots. This finite bound changes only negative entries;
+    # all read/write-root and overlap validation below remains unchanged.
+    if not isinstance(extra, list) or len(extra) > 32 or not all(isinstance(p, str) for p in extra):
+        _reject('Protected roots require at most 32 exact paths')
     if len(set(extra)) != len(extra):
         _reject('Duplicate protected roots')
     env = value.get('native_environment', {})
@@ -301,7 +304,20 @@ def _below(path: Path, parent: Path, cache: dict) -> bool:
     return native_sandbox._relative_parts(path, parent, cache) is not None
 
 
-def validate(recipe: dict, state_dir: Path) -> None:
+def _output_directory(value: str, *, planned: bool = False) -> Path:
+    """Read-only validation of an exact future output directory.
+
+    Planning relaxes existence only: canonical spelling, no aliases/symlinks
+    and directory type of every existing ancestor still apply. Runtime callers
+    keep the default existing-directory requirement.
+    """
+    path = native_paths._canonical(value, directory=not planned)
+    if planned and any(parent.exists() and not parent.is_dir() for parent in (path, *path.parents)):
+        _reject('Planned output directory has an existing non-directory ancestor')
+    return path
+
+
+def validate(recipe: dict, state_dir: Path, *, planned_outputs: bool = False) -> None:
     """Cheap recipe/path validation; source hardlink scanning is separate."""
     if not enabled(recipe):
         return
@@ -309,7 +325,7 @@ def validate(recipe: dict, state_dir: Path) -> None:
     if any(key in recipe for key in _LEGACY) or recipe.get('mutable') or recipe.get('immutable'):
         _reject('Isolated checkout cannot mix exact-file or continuous-monitoring contracts')
     source = native_paths._canonical(recipe['source'], directory=True)
-    outputs = native_paths._canonical(recipe['outputs'], directory=True)
+    outputs = _output_directory(recipe['outputs'], planned=planned_outputs)
     state = native_paths._canonical(str(state_dir), directory=True)
     reads = recipe.get('read_roots', [])
     if not isinstance(reads, list) or len(reads) > 24 or not all(isinstance(p, str) for p in reads):
@@ -379,7 +395,7 @@ def validate(recipe: dict, state_dir: Path) -> None:
                 or any(native_paths.overlaps(path, guard, _cache=cache) for guard in denied)):
             _reject('Native environment tools require a read-only trusted root')
     for key in _OWNED_DIRECTORY_ENV & env.keys():
-        path = native_paths._canonical(env[key], directory=True)
+        path = _output_directory(env[key], planned=planned_outputs)
         if path == outputs or not _below(path, outputs, cache):
             _reject('Native runtime directories must be prepared strict output children')
         if any(native_paths.overlaps(path, guard, _cache=cache) for guard in denied | instructions | trusted):
@@ -387,7 +403,8 @@ def validate(recipe: dict, state_dir: Path) -> None:
 
 
 
-def scoped_outputs(recipe: dict, output: Path, *, prepare: bool = False) -> dict:
+def scoped_outputs(recipe: dict, output: Path, *, prepare: bool = False,
+                   planned_outputs: bool = False) -> dict:
     """Rebind only owned XDG directories for a trusted technical output scope.
 
     Callers add every authoritative state/private-control root to protected_roots
@@ -395,11 +412,13 @@ def scoped_outputs(recipe: dict, output: Path, *, prepare: bool = False) -> dict
     a separately prepared private root. Retain the original recipe for identity
     and authority checks. Rendering profiles never creates these directories.
     """
+    if prepare and planned_outputs:
+        _reject('Output planning cannot prepare directories')
     if not enabled(recipe):
         return {**recipe, 'outputs': str(output)}
     policy = copy.deepcopy(_config(recipe))
-    original = native_paths._canonical(recipe['outputs'], directory=True)
-    destination = native_paths._canonical(str(output), directory=True)
+    original = _output_directory(recipe['outputs'], planned=planned_outputs)
+    destination = _output_directory(str(output), planned=planned_outputs)
     source = native_paths._canonical(recipe['source'], directory=True)
     guards = (_denied(recipe) | _trusted(recipe) | _instruction_paths(recipe)
               | {source, *(native_paths._canonical(p) for p in recipe.get('read_roots', []))}
@@ -567,8 +586,12 @@ def validate_tree(recipe: dict, *, deadline: float | None = None) -> dict[str, i
     return counts
 
 
-def profile(recipe: dict, state_dir: Path, assessment: bool = False, native: bool = False) -> dict[str, str]:
-    validate(recipe, state_dir)
+def profile(recipe: dict, state_dir: Path, assessment: bool = False, native: bool = False,
+            *, planned_outputs: bool = False) -> dict[str, str]:
+    if planned_outputs:
+        validate(recipe, state_dir, planned_outputs=True)
+    else:
+        validate(recipe, state_dir)
     _config(recipe)
     source, outputs = Path(recipe['source']), Path(recipe['outputs'])
     fs = {':root': 'deny', ':minimal': 'read', **{p: 'read' for p in recipe.get('read_roots', [])},

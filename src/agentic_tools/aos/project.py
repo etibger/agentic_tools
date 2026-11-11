@@ -20,7 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from agentic_tools import check_adapters
 from . import budgets, checkout_boundary, instructions, native_network, native_paths, native_processes
-from .checks import adapter_for, source_digest
+from .checks import source_digest, validate_descriptors
 from .coordinator import ConceptRequest, ExecutionEnvelope, IntroductionRequest
 from .readiness import run_readiness
 from .store import Rejected, digest, identifier
@@ -34,8 +34,6 @@ _RECIPE_KEYS = {'execution_policy', 'source', 'outputs', 'read_roots', 'checks',
 _ENVELOPE_KEYS = set(ExecutionEnvelope.model_fields) | {
     'execution_policy', 'runtime_recipe', 'runtime_recipe_digest', 'check_adapters',
     'check_kinds', 'adapter_architecture', 'product_budget', 'change_roots'}
-_CHECK_KEYS = {'name', 'argv', 'timeout_seconds', 'scope', 'result_kind', 'adapter_id', 'suite_counts',
-               'bun_commands'}
 _BUDGET_KEYS = {'budget_id', 'product_id', 'ledger_directory', 'max_assignments', 'max_seconds', 'max_job_seconds'}
 
 
@@ -107,22 +105,7 @@ def _private(path: Path, *, file=False):
 
 
 def _checks(checks: list, ceiling: int) -> dict:
-    if not isinstance(checks, list):
-        raise Rejected('project_checks', 'Checks must be explicit native command descriptors')
-    selected = {}
-    for check in checks:
-        if (not isinstance(check, dict) or set(check) - _CHECK_KEYS
-                or not isinstance(check.get('name'), str)):
-            raise Rejected('project_checks', 'Unsupported native check descriptor')
-        identifier(check['name'])
-        if (check['name'] in selected or type(check.get('timeout_seconds')) is not int
-                or not 1 <= check['timeout_seconds'] <= ceiling
-                or not isinstance(check.get('argv'), list) or not check['argv']
-                or not all(isinstance(arg, str) and arg and '\x00' not in arg for arg in check['argv'])
-                or not isinstance(check.get('scope'), str) or not check['scope'].strip()):
-            raise Rejected('project_checks', 'Checks need unique names, exact commands, scope and bounded time')
-        selected[check['name']] = adapter_for(check)
-    return selected
+    return validate_descriptors(checks, ceiling)
 
 
 def _lifecycle_count(state: Path, work_id: str) -> int:

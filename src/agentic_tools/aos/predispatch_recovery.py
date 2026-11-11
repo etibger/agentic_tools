@@ -1,6 +1,6 @@
 """Explicit, append-only recovery authority for an already-amended held feature.
 
-Preparation runs no checks. A normal saved decision grants one supplemental
+Preparation performs static profile checks without launching processes. A normal saved decision grants one supplemental
 metadata attempt and finite named coordinator slots. Applying that exact packet
 never admits work, changes its original clock, refunds charges or resets a journal.
 """
@@ -29,12 +29,19 @@ from .store import Rejected, canonical, digest, identifier, now
 FORMAT = 'aos-predispatch-recovery-v1'
 TABLE = 'predispatch_recovery'
 INTENT = TABLE + '_intent'
+SUCCESSOR = TABLE + '_successor_intent'
 SCHEMA = {}
 for name in (TABLE, INTENT):
     SCHEMA[name] = f'CREATE TABLE {name} (operation_id TEXT PRIMARY KEY,work_id TEXT UNIQUE NOT NULL,record TEXT NOT NULL)'
     for action in ('update', 'delete'):
         SCHEMA[name + '_' + action] = (f'CREATE TRIGGER {name}_{action} BEFORE {action.upper()} ON {name} '
             "BEGIN SELECT RAISE(ABORT,'Supplemental recovery history is immutable'); END")
+SUCCESSOR_SCHEMA = {
+    SUCCESSOR: f'CREATE TABLE {SUCCESSOR} (operation_id TEXT PRIMARY KEY,work_id TEXT UNIQUE NOT NULL,predecessor_operation_id TEXT UNIQUE NOT NULL,record TEXT NOT NULL)',
+}
+for action in ('update', 'delete'):
+    SUCCESSOR_SCHEMA[SUCCESSOR + '_' + action] = (f'CREATE TRIGGER {SUCCESSOR}_{action} BEFORE {action.upper()} ON {SUCCESSOR} '
+        "BEGIN SELECT RAISE(ABORT,'Supplemental recovery successor history is immutable'); END")
 
 
 class Exact(BaseModel):
@@ -77,6 +84,12 @@ class ConfigurationRefresh(Exact):
     replacements: list[ConfigurationScalar] = Field(min_length=1, max_length=2)
 
 
+class FailedPredecessor(Exact):
+    packet: Reference
+    qualification: Reference
+    engine_directory: str
+
+
 class PrepareRequest(Exact):
     operation_id: str
     work_id: str
@@ -95,6 +108,7 @@ class PrepareRequest(Exact):
     concept_update_path: str
     recipe_path: str | None = None
     configuration_refresh: list[ConfigurationRefresh] = Field(default_factory=list, max_length=16)
+    predecessor: FailedPredecessor | None = None
     allowances: Allowances
 
 
@@ -117,15 +131,27 @@ def require(value, message):
         raise Rejected('predispatch_recovery', message)
 
 
-def _schema(db, create=False):
+def _schema(db, create=False, successor=False):
     found = dict(db.execute("SELECT name,sql FROM sqlite_schema WHERE name GLOB 'predispatch_recovery*' OR "
-        "(tbl_name IN (?,?) AND (type='trigger' OR (type='index' AND sql IS NOT NULL)))", (TABLE, INTENT)).fetchall())
+        "(tbl_name IN (?,?,?) AND (type='trigger' OR (type='index' AND sql IS NOT NULL)))", (TABLE, INTENT, SUCCESSOR)).fetchall())
     if not found and create:
         for sql in SCHEMA.values():
             db.execute(sql)
-        return True
-    require(not found or found == SCHEMA, 'Supplemental recovery audit schema differs')
+        found = dict(SCHEMA)
+    require(not found or found in (SCHEMA, {**SCHEMA, **SUCCESSOR_SCHEMA}), 'Supplemental recovery audit schema differs')
+    if create and successor and SUCCESSOR not in found:
+        for sql in SUCCESSOR_SCHEMA.values():
+            db.execute(sql)
+        found.update(SUCCESSOR_SCHEMA)
     return bool(found)
+
+
+def _intent_table(request):
+    return SUCCESSOR if request.get('predecessor') is not None else INTENT
+
+
+def _has_table(db, name):
+    return bool(db.execute("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?", (name,)).fetchone())
 
 
 def source_manifest(directory):
@@ -354,12 +380,22 @@ def _concept(m, request):
         prerequisites={k: False for k in old['prerequisites']},
         predispatch_recovery={'operation_id': request['operation_id'], 'metadata_digest': digest(m)})
     allowances = request['allowances']
-    envelope['authority'] += (' Supplemental recovery ' + request['operation_id'] +
-        ' prospectively grants one metadata attempt of at most ' + str(allowances['metadata_max_seconds']) +
-        ' seconds and these new coordinator-only reservations (seconds): ' + canonical(allowances['runtime_slots']) +
-        '. Its effective coordinator lifetime ceiling is ' + str(allowances['effective_limit_seconds']) +
-        ' seconds, superseding only the prior coordinator ceiling. Original approval start, deadline, spent charges, '
-        'product envelope and every historical decision and attempt remain unchanged; no refund, slot reuse or automatic retry.')
+    if request.get('predecessor') is not None:
+        envelope['authority'] += (' Supplemental recovery successor ' + request['operation_id'] +
+            ' grants one additional metadata attempt of at most ' + str(allowances['metadata_max_seconds']) +
+            ' seconds in its separate namespace. It carries forward unchanged these previously approved but unapplied '
+            'coordinator-only reservations (seconds): ' + canonical(allowances['runtime_slots']) +
+            ', and the same prospective effective coordinator lifetime ceiling of ' + str(allowances['effective_limit_seconds']) +
+            ' seconds. It adds no runtime reservation or lifetime seconds to that grant. The failed metadata attempt remains consumed; '
+            'original approval start, deadline, spent charges, product envelope and every historical decision remain unchanged. '
+            'No refund, slot reuse, automatic retry, branch or further successor is authorized.')
+    else:
+        envelope['authority'] += (' Supplemental recovery ' + request['operation_id'] +
+            ' prospectively grants one metadata attempt of at most ' + str(allowances['metadata_max_seconds']) +
+            ' seconds and these new coordinator-only reservations (seconds): ' + canonical(allowances['runtime_slots']) +
+            '. Its effective coordinator lifetime ceiling is ' + str(allowances['effective_limit_seconds']) +
+            ' seconds, superseding only the prior coordinator ceiling. Original approval start, deadline, spent charges, '
+            'product envelope and every historical decision and attempt remain unchanged; no refund, slot reuse or automatic retry.')
     update = m['concept_update']
     require(set(update) == {'body', 'decision_context', 'recommendation', 'alternative', 'consequence'},
         'Only the technical decision brief may change')
@@ -384,7 +420,14 @@ def _snapshot_unchanged(m):
         require(previous._file(ref['path'])[1] == ref, 'Historical operation receipt changed')
 
 
-def _validate_packet(store, packet, *, snapshot=True):
+def _metadata_preflight(store, request, recipe, contract):
+    return readiness.preflight_metadata(recipe, state_dir=store.directory,
+        readiness_dir=Path(request['destination_directory']) / 'readiness',
+        model=contract['model'], effort=contract['effort'],
+        max_seconds=request['allowances']['metadata_max_seconds'], max_attempts=1, native_checks=[])
+
+
+def _validate_packet(store, packet, *, snapshot=True, historical_runtime_identity=None):
     require(packet.get('format') == FORMAT, 'Unsupported supplemental recovery packet')
     request = packet['request']; PrepareRequest.model_validate(request, strict=True)
     m = packet['metadata']
@@ -393,7 +436,10 @@ def _validate_packet(store, packet, *, snapshot=True):
     prior, prior_packet = _historical(store, request['prior_amendment'], request['prior_engine_directory'])
     require(prior == m['original_amendment_receipt'] and
         prior_packet['metadata']['controller_contract'] == m['original_controller'], 'Original recovery basis changed')
-    require(readiness._runtime_identity() == m['runtime_identity'], 'Exact reviewed recovery engine changed')
+    require((readiness._runtime_identity() if historical_runtime_identity is None else historical_runtime_identity) == m['runtime_identity'],
+        'Exact reviewed recovery engine changed')
+    if request.get('predecessor') is not None:
+        require(_failed_predecessor(store, request, snapshot=snapshot) == m['failed_predecessor'], 'Failed predecessor lineage changed')
     new, new_ref = _controller(store, m['original_controller'], request)
     require(new == m['controller_contract'] and new_ref == m['controller_reference'], 'Recovery source template changed')
     require(previous._json(request['original_controller_contract_path'])[0] == m['original_controller'] and
@@ -406,6 +452,9 @@ def _validate_packet(store, packet, *, snapshot=True):
         'Original readiness history changed')
     recipe, recipe_ref = _recipe(store, m['original_contract']['runtime_recipe'], request)
     require(recipe == m['recipe'] and recipe_ref == m['recipe_reference'], 'Exact recovery recipe changed')
+    if historical_runtime_identity is None:
+        require(m.get('metadata_preflight') == _metadata_preflight(store, request, recipe, m['original_contract']),
+            'Exact metadata profile preflight changed')
     require(time_valid(m['accounting_origin']['deadline']), 'Original feature deadline expired')
     if snapshot:
         require(previous._baseline(m['recipe'], m['original_controller']) == m['source_candidate'], 'Product source changed')
@@ -417,23 +466,73 @@ def time_valid(deadline):
     return type(deadline) in (int, float) and math.isfinite(deadline) and time.time() < deadline
 
 
+def _failed_predecessor(store, request, *, snapshot=True):
+    """One successor to a positively settled, pre-role failure; never a reset."""
+    predecessor = request['predecessor']
+    require(Path(predecessor['packet']['path']).is_file() and Path(predecessor['qualification']['path']).is_file(),
+        'Interrupted or missing predecessor qualification cannot acquire a successor')
+    packet, packet_ref = previous._json(previous._protected(store, predecessor['packet']['path']), immutable=True)
+    qualification, qualified_ref = previous._json(previous._protected(store, predecessor['qualification']['path']), immutable=True)
+    require(packet_ref == predecessor['packet'] and qualified_ref == predecessor['qualification'] and
+        packet['request'].get('predecessor') is None, 'Only the exact original recovery may have one successor')
+    old_request = packet['request']; qualified_request = qualification['request']
+    ApplyRequest.model_validate(qualified_request, strict=True)
+    require(old_request['work_id'] == request['work_id'] and old_request['operation_id'] != request['operation_id'] and
+        qualified_request['operation_id'] == old_request['operation_id'] and qualified_request['work_id'] == request['work_id'] and
+        qualified_request['packet_path'] == packet_ref['path'] and qualified_request['packet_sha256'] == packet_ref['sha256'] and
+        qualified_request['digest'] == digest(previous._package(packet['concept'])) and
+        all(qualified_request[k] == request[k] for k in ('decision_id', 'digest', 'expected_work_revision')),
+        'Successor must bind the exact failed current decision and work revision')
+    destination = Path(request['destination_directory']); original_destination = Path(old_request['destination_directory'])
+    require(not destination.is_relative_to(original_destination) and not original_destination.is_relative_to(destination) and
+        qualified_ref['path'] == str(original_destination / 'qualification-result.json'), 'Successor must use a separate output namespace')
+    require(request['prior_amendment'] == old_request['prior_amendment'] and
+        request['controller_resource'] == old_request['controller_resource'] and
+        request['readiness_directory'] == old_request['readiness_directory'] and
+        all(request['allowances'][k] == old_request['allowances'][k] for k in ('runtime_slots', 'effective_limit_seconds')),
+        'Successor must carry forward the same unapplied runtime grant and original accounting basis')
+    with store._connection() as db:
+        require(_schema(db), 'Original recovery intent absent')
+        intent = db.execute(f'SELECT record FROM {INTENT} WHERE operation_id=? AND work_id=?',
+            (old_request['operation_id'], request['work_id'])).fetchone()
+        require(intent and json.loads(intent[0]) == {'packet': packet_ref}, 'Original recovery intent differs')
+        require(not db.execute(f'SELECT 1 FROM {TABLE} WHERE operation_id=?', (old_request['operation_id'],)).fetchone(),
+            'An applied recovery cannot acquire a failed-metadata successor')
+    decision = previous._approval(store, request['decision_id'], request['work_id'], request['digest'])
+    require(json.loads(decision['package_snapshot']) == previous._package(packet['concept']), 'Failed current proposal differs from saved approval')
+    identity = packet['metadata']['runtime_identity']
+    require(digest(source_manifest(predecessor['engine_directory'])) == identity['runtime_source_digest'] and
+        {k: v for k, v in readiness._runtime_identity().items() if k != 'runtime_source_digest'} ==
+        {k: v for k, v in identity.items() if k != 'runtime_source_digest'}, 'Exact failed recovery engine or runtime provenance differs')
+    _validate_packet(store, packet, snapshot=snapshot, historical_runtime_identity=identity)
+    _qualification_result(store, packet, packet_ref, qualified_request, qualification,
+        failed=True, historical_runtime_identity=identity)
+    return {'packet': packet_ref, 'qualification': qualified_ref, 'operation_id': old_request['operation_id'],
+        'decision_id': request['decision_id'], 'concept_digest': request['digest'],
+        'engine_directory': predecessor['engine_directory'], 'engine_digest': identity['runtime_source_digest'],
+        'reservation': qualification['reservation'], 'journal': qualification['journal'], 'receipt': qualification['receipt']}
+
+
 def prepare(lifecycle, request):
     PrepareRequest.model_validate(request, strict=True)
     identifier(request['operation_id']); identifier(request['work_id'])
     store = lifecycle.store; work = request['work_id']
     destination = previous._protected(store, request['destination_directory'], directory=True)
     packet_path = destination / 'packet.json'
+    intent_table = _intent_table(request)
     with store._connection() as db:
-        if _schema(db):
-            row = db.execute(f'SELECT record FROM {INTENT} WHERE work_id=?', (work,)).fetchone()
+        if _schema(db) and _has_table(db, intent_table):
+            row = db.execute(f'SELECT record FROM {intent_table} WHERE work_id=?', (work,)).fetchone()
             if row:
                 intent = json.loads(row[0]); packet, ref = previous._json(intent['packet']['path'], immutable=True)
                 require(packet['request'] == request and ref == intent['packet'], 'Another recovery already owns this work')
                 _validate_packet(store, packet)
                 return {'packet_path': ref['path'], 'packet_sha256': ref['sha256'], 'packet': packet}
     prior, old_packet = _historical(store, request['prior_amendment'], request['prior_engine_directory'])
-    require(prior['to_decision_id'] == request['decision_id'] and prior['to_concept_digest'] == request['digest'] and
-        prior['work_id'] == work, 'Recovery must bind the exact current prior amendment decision')
+    predecessor = _failed_predecessor(store, request) if request.get('predecessor') is not None else None
+    require(prior['work_id'] == work and (predecessor is not None or
+        prior['to_decision_id'] == request['decision_id'] and prior['to_concept_digest'] == request['digest']),
+        'Recovery must bind the exact current decision and original registered amendment')
     decision = previous._approval(store, request['decision_id'], work, request['digest'])
     accounting = previous.current_accounting(store, prior, settled=True)
     old, _ = previous._json(request['original_controller_contract_path'])
@@ -452,8 +551,11 @@ def prepare(lifecycle, request):
             contract = previous._passive(lifecycle, db, work); previous._empty_product(db, contract)
             package = json.loads(decision['package_snapshot'])
             ceiling = db.execute('SELECT coalesce(max(event_id),0) FROM lifecycle_event WHERE work_id=?', (work,)).fetchone()[0]
-            require(contract == previous._effective_contract(db, package, request['digest'], floor=prior['prerequisite_event_floor']),
+            base_package = previous._package(old_packet['concept'])
+            require(contract == previous._effective_contract(db, base_package, prior['to_concept_digest'], floor=prior['prerequisite_event_floor']),
                 'Prior registered authority differs')
+            if _schema(db):
+                require(not db.execute(f'SELECT 1 FROM {TABLE} WHERE work_id=?', (work,)).fetchone(), 'A recovery was already applied')
             recipe, recipe_ref = _recipe(store, contract['runtime_recipe'], request)
             m = {'work_id': work, 'operation_id': request['operation_id'], 'state_dir': str(store.directory),
                 'worker_roots': list(map(str, store.worker_writable_roots)), 'original_contract': contract,
@@ -464,14 +566,21 @@ def prepare(lifecycle, request):
                 'coordinator_reservation_plan': plan, 'concept_update': update, 'concept_update_reference': update_ref,
                 'readiness_before': journal, 'readiness_journal': journal_ref,
                 'source_candidate': previous._baseline(recipe, old), 'recipe': recipe, 'recipe_reference': recipe_ref,
-                'runtime_identity': readiness._runtime_identity()}
+                'runtime_identity': readiness._runtime_identity(),
+                'metadata_preflight': _metadata_preflight(store, request, recipe, contract)}
+            if predecessor is not None:
+                m['failed_predecessor'] = predecessor
             packet = {'format': FORMAT, 'request': request, 'metadata': m, 'concept': _concept(m, request)}
             ConceptRequest.model_validate(packet['concept'], strict=True)
             _validate_packet(store, packet)
-            _schema(db, create=True)
-            require(not db.execute(f'SELECT 1 FROM {INTENT} WHERE work_id=?', (work,)).fetchone(), 'Concurrent recovery owns this work')
+            _schema(db, create=True, successor=predecessor is not None)
+            require(not db.execute(f'SELECT 1 FROM {intent_table} WHERE work_id=?', (work,)).fetchone(), 'Concurrent recovery owns this work')
             ref = previous._retain(packet_path, packet)
-            db.execute(f'INSERT INTO {INTENT} VALUES(?,?,?)', (request['operation_id'], work, canonical({'packet': ref})))
+            if predecessor is not None:
+                db.execute(f'INSERT INTO {SUCCESSOR} VALUES(?,?,?,?)',
+                    (request['operation_id'], work, predecessor['operation_id'], canonical({'packet': ref})))
+            else:
+                db.execute(f'INSERT INTO {INTENT} VALUES(?,?,?)', (request['operation_id'], work, canonical({'packet': ref})))
             fence(); clock_fence(); db.commit()
     return {'packet_path': ref['path'], 'packet_sha256': ref['sha256'], 'packet': packet}
 
@@ -484,7 +593,9 @@ def _load(store, request):
         'Recovery request does not identify its exact approved packet')
     with store._connection() as db:
         require(_schema(db), 'Recovery intent is absent')
-        intent = db.execute(f'SELECT record FROM {INTENT} WHERE operation_id=? AND work_id=?',
+        table = _intent_table(packet['request'])
+        require(_has_table(db, table), 'Recovery intent lineage is absent')
+        intent = db.execute(f'SELECT record FROM {table} WHERE operation_id=? AND work_id=?',
             (request['operation_id'], request['work_id'])).fetchone()
         require(intent and json.loads(intent[0]) == {'packet': ref}, 'Recovery intent differs')
     decision = previous._approval(store, request['decision_id'], request['work_id'], request['digest'])
@@ -546,7 +657,7 @@ def qualify(lifecycle, request):
         return value
 
 
-def _qualification_result(store, packet, packet_ref, request, value):
+def _qualification_result(store, packet, packet_ref, request, value, *, failed=False, historical_runtime_identity=None):
     destination = Path(packet['request']['destination_directory'])
     expected_reservation = {'format': FORMAT, 'packet': packet_ref, 'request': request,
         'decision_id': request['decision_id'], 'metadata_attempts': 1,
@@ -569,7 +680,18 @@ def _qualification_result(store, packet, packet_ref, request, value):
         result['resource_output'] == str(destination / 'readiness/outputs/readiness-1') and
         result['limits']['max_attempts'] == 1 and result['limits']['max_seconds'] == journal['max_seconds'],
         'Supplemental readiness receipt identity differs')
-    previous._ready_result(result, packet['metadata']['recipe'])
+    if failed:
+        identity = historical_runtime_identity or readiness._runtime_identity()
+        require(result.get('status') == 'failed' and result.get('ready') is False and result.get('simulated') is False and
+            result.get('roles') == [] and result.get('native') is None and result.get('phase') is None and
+            result.get('cleanup_verified') is True and result.get('requested_native_checks') == [] and
+            result.get('readiness_scope') == 'model-metadata-only' and
+            all(type(result.get(k)) is int and result[k] == 0 for k in ('model_turns', 'product_attempts', 'product_reservations')) and
+            result.get('prepared_recipe') == packet['metadata']['recipe'] and result.get('runtime_identity') == identity and
+            isinstance(result.get('blockers'), list) and bool(result['blockers']),
+            'Only a positively settled pre-role metadata failure can have a successor')
+    else:
+        previous._ready_result(result, packet['metadata']['recipe'])
     readiness._verify_cached_cleanup(result, destination / 'readiness/runtime')
 
 
@@ -611,6 +733,8 @@ def apply(lifecycle, request):
                 'effective_limit_seconds': packet['request']['allowances']['effective_limit_seconds'],
                 'coordinator_reservation_plan': m['coordinator_reservation_plan'],
                 'registered_contract': expected, 'prerequisite_event_floor': floor, 'created_at': now()}
+            if 'failed_predecessor' in m:
+                receipt['failed_predecessor'] = m['failed_predecessor']
             db.execute(f'INSERT INTO {TABLE} VALUES(?,?,?)', (request['operation_id'], work, canonical(receipt)))
             store._record(db, request['operation_id'], ['predispatch_recovery', request],
                 {'applied': True, 'receipt_digest': digest(receipt), 'work_id': work})
