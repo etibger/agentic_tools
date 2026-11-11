@@ -133,6 +133,11 @@ Run the coordinator from an already authorized chat or administrator context. Th
 | `qualify-predispatch-recovery --request FILE` | After its saved approval, reserve and run the one explicitly granted supplemental metadata attempt. |
 | `apply-predispatch-recovery --request FILE` | Apply the exact approved recovery after metadata passes; preserve historical authority and leave work held. |
 | `verify-predispatch-recovery --request FILE` | Read back the applied recovery, source bindings, allowance chain and original accounting. |
+| `preview-predispatch-corrective-rebind --request FILE` | Construct a static proposal for correcting an applied recovery; record no intent or approval and disclose deferred live gates. |
+| `prepare-predispatch-corrective-rebind --request FILE` | After fresh ownership and settled-failure checks, retain one corrective intent bound to the exact applied parent. |
+| `qualify-predispatch-corrective-rebind --request FILE` | After its saved approval, consume the explicitly bounded diagnostic and metadata allowances. |
+| `apply-predispatch-corrective-rebind --request FILE` | Apply the exact approved correction after both qualifications pass; keep work held and unadmitted. |
+| `verify-predispatch-corrective-rebind --request FILE` | Verify the corrective receipt, complete historical lineage and cumulative accounting. |
 | `status WORK_ID` | Read the durable work record. `--surface service` and `--surface dashboard` project the same authoritative records. |
 | `pause`, `resume`, `cancel` | Delegate to existing lifecycle control and owned-effect reconciliation. |
 | `worker` | Run the existing worker with an explicit cycle cap and either `--fake-plan` or the separately approved `--runtime-recipes`. |
@@ -723,3 +728,125 @@ transition, backend implementation or runtime qualification. Hand the exact
 verified recovery receipt and finite new slot names to the delivery coordinator,
 which must obtain actual runtime evidence before ordinary prerequisite
 reconciliation and admission.
+
+### One correction after an applied recovery
+
+The corrective-rebind route covers a settled runtime failure after a supplemental
+recovery was applied, while the feature remains held, unadmitted and without
+product assignments. It preserves the applied parent, earlier amendment,
+decisions, failed attempts, retained outputs and every charge. Successful
+retention commands and their archive or observation outputs are known effects:
+a failure before VM lifecycle operations is not a zero-effects result. Unknown
+effects, an open reservation, an active owner or incomplete cleanup block this
+route. There is one corrective intent per work and applied parent receipt, with
+no branch, correction-of-correction or automatic additional attempt.
+
+The strict `PrepareRequest` binds the current work revision, concept digest and
+decision; `applied_recovery` identifies the parent's operation, work and receipt
+digest, and `applied_engine_directory` retains its exact engine. The controller
+paths/resource, source changes, additional pins, concept update and distinct
+destination follow the supplemental request conventions. `settled_failure`
+binds the failure, settlement and closed-owner evidence; every maintained
+command receipt and retained output; the original controller lock's path,
+device and inode; preserved process identity, files and absent paths. Preserved
+configuration and PID-file bytes are copied into the immutable packet so later
+approved VM changes do not rewrite that historical proof. The recipe and
+configuration must remain exactly those already applied; this route permits no
+configuration refresh.
+
+`diagnostic` specifies literal `argv`, `cwd`, explicit `environment`, `sources`
+and `source_closure`. Its interpreter must keep the coordinator's approved
+lexical environment path and use `-I -B` before the pinned script. The complete
+closure and interpreter identity are checked, including the virtual environment
+configuration and approved lexical `TMPDIR`. The planned process-census
+compatibility diagnostic is separate from runtime ownership qualification; its
+result cannot establish socket/listener ownership, a lifecycle seal or a VM
+transition PASS.
+
+The supported sequence is:
+
+1. Use `preview-predispatch-corrective-rebind --request FILE` for static review.
+   Its packet explicitly reports `approval_recorded: false` and
+   `intent_created: false`. Controller/worker/accounting fences, exact owner
+   absence, maintained-command cleanup and preserved runtime identity remain
+   deferred live gates. Preview is neither permission nor proof of those gates.
+2. When live preparation is authorized, run
+   `prepare-predispatch-corrective-rebind --request FILE`. It acquires the
+   controller, worker and accounting fences in that order and rechecks the
+   bound state before retaining the immutable packet and unique intent. It
+   starts no diagnostic, metadata attempt, runtime owner or reservation.
+3. Present the returned `packet.concept` and obtain its distinct ordinary saved
+   decision. Implementation approval does not approve this live recovery.
+   Do not use `register-contract` or substitute a model message for the decision.
+4. Run `qualify-predispatch-corrective-rebind --request FILE` only after that
+   exact approval. One durable reservation consumes both qualification
+   allowances before the owned diagnostic launches. Its PASS and cleanup must
+   precede the single metadata attempt. Current decision/revision and bound
+   evidence are checked again before diagnostic release and before metadata.
+5. After both pass, run `apply-predispatch-corrective-rebind --request FILE`,
+   then `verify-predispatch-corrective-rebind --request FILE` and read status.
+   Atomic application retains the full lineage, remains held/unadmitted and
+   resets technical prerequisites to require fresh evidence. It changes no
+   physical clock and launches no VM operation or product work.
+
+Qualification and application use the supplemental `ApplyRequest` fields;
+verification uses `operation_id`, `work_id` and the applied `receipt_digest`.
+Keep operation IDs and requests unchanged for identical replay. Failed or
+interrupted qualification consumes both reserved allowances, even if metadata
+never starts; a new ID or directory cannot retry it. Stale approval, changed
+source, conflicting concurrent preparation or incomplete cleanup remains a hold.
+
+The exact new decision grants one metadata attempt of 30–600 seconds, one
+process-census compatibility diagnostic of 27–60 seconds total, and exactly one
+distinct new 3600-second coordinator slot. Diagnostic time includes its
+26-second cleanup reserve: a 60-second grant leaves at most 34 seconds for the
+payload. Both complete qualification budgets must fit before the original
+feature deadline, with each phase's full budget checked again before launch.
+The effective coordinator ceiling must increase by exactly 3600 seconds; old
+charges, consumed slots, unused existing slots and the original deadline remain
+unchanged. Diagnostic and metadata allowances do not refund runtime charges or
+grant another native-handoff attempt.
+
+This interface and its isolated tests establish only the exercised tooling
+behavior. A concrete runtime package still needs its complete operator procedure,
+independent acceptance and separate live decision. Neither preview, synthetic
+tests, a diagnostic PASS nor metadata PASS proves actual runtime qualification.
+The delivery coordinator retains responsibility for the later strict ownership
+gate, runtime transition and backend implementation.
+
+### Complete bounded process observations and child context
+
+The process classifier and macOS kernel-argument decoder share one complete
+argument policy: at most 128 arguments and 65536 bytes of UTF-8 argument data
+in total. There is no separate 4096-byte per-argument limit. One argument may
+use the remaining aggregate allowance, and the ownership marker is searched
+through every complete argument, including `argv[0]` and the last argument.
+The kernel capture remains limited to 131072 bytes, including its executable,
+padding and trailing environment storage. That is a deliberate local bound,
+not a claim that every operating-system-permitted argument block will fit.
+
+The reader requires matching size-only queries before and after capture, allowing
+only the kernel's four-byte size rounding. The decoder uses the exact 64-bit
+executable-path padding, then parses exactly the declared argument count with
+each NUL terminator; it does not skip an arbitrary run of NUL bytes. It never
+decodes, returns or searches trailing environment bytes. Unavailable arguments,
+malformed or incomplete capture,
+invalid UTF-8, excessive count or size, PID/UID/birth changes and contradictory
+ownership hold execution. A stable unrelated process may be excluded before
+querying its executable only after two identical complete bounded argument reads
+and stable identity observations.
+A marker selects a candidate, not an owner: exact executable and service-role
+checks, PID files, SSH, sockets and listeners still require their existing
+attestation. There are no application-specific or PID-specific exclusions.
+
+Native child launches must also preserve the exact approved invocation context.
+When the saved native plan includes `TMPDIR`, carry that exact lexical value
+through each affected explicit child environment, including a child that loads
+the runner afresh or constructs another authority process. A legitimate
+`/var` to `/private/var` alias does not authorize changing the approved spelling
+before equality verification. Do not inherit the full ambient environment,
+select a different temporary root, or bypass the native profile comparison.
+The retained invocation procedure must identify the current entry, interpreter,
+working directory and module-file context as well as its fixed environment.
+Harmless child-launch tests establish those tested boundaries only; they do not
+prove that the live observer or native runtime has passed.

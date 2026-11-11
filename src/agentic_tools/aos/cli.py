@@ -56,7 +56,8 @@ def main(argv: list[str] | None = None) -> int:
                  "prepare-source-review-evidence", "prepare-assessment-review-continuation",
                  "prepare-predispatch-settings-rebind", "apply-predispatch-settings-rebind", "verify-predispatch-settings-rebind",
                  "prepare-predispatch-feature-amendment", "apply-predispatch-feature-amendment", "verify-predispatch-feature-amendment",
-                 "prepare-predispatch-recovery", "qualify-predispatch-recovery", "apply-predispatch-recovery", "verify-predispatch-recovery"):
+                 "prepare-predispatch-recovery", "qualify-predispatch-recovery", "apply-predispatch-recovery", "verify-predispatch-recovery",
+                 "preview-predispatch-corrective-rebind", "prepare-predispatch-corrective-rebind", "qualify-predispatch-corrective-rebind", "apply-predispatch-corrective-rebind", "verify-predispatch-corrective-rebind"):
         command = commands.add_parser(name)
         command.add_argument("--state-dir", type=Path, required=True, help="Private authoritative directory outside all worker-writable roots")
         command.add_argument("--worker-writable-root", type=Path, action="append", required=True, help="Declare each worker-writable root; actual runtime denial still needs verification")
@@ -67,7 +68,8 @@ def main(argv: list[str] | None = None) -> int:
                 command.add_argument("--archive-journal", type=Path, help="Optional explicit local history journal; read-only and never served as a file")
         elif name in ('prepare-predispatch-settings-rebind', 'apply-predispatch-settings-rebind', 'verify-predispatch-settings-rebind',
                       'prepare-predispatch-feature-amendment', 'apply-predispatch-feature-amendment', 'verify-predispatch-feature-amendment',
-                      'prepare-predispatch-recovery', 'qualify-predispatch-recovery', 'apply-predispatch-recovery', 'verify-predispatch-recovery'):
+                      'prepare-predispatch-recovery', 'qualify-predispatch-recovery', 'apply-predispatch-recovery', 'verify-predispatch-recovery',
+                      'preview-predispatch-corrective-rebind', 'prepare-predispatch-corrective-rebind', 'qualify-predispatch-corrective-rebind', 'apply-predispatch-corrective-rebind', 'verify-predispatch-corrective-rebind'):
             command.add_argument('--request', type=Path, required=True, help='Exact protected settings-refresh request; never supplies approval or resets accounting')
         elif name == 'prepare-source-review-evidence':
             command.add_argument('--work-id', required=True)
@@ -225,8 +227,11 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         if args.command in ('prepare-predispatch-settings-rebind', 'apply-predispatch-settings-rebind', 'verify-predispatch-settings-rebind',
                       'prepare-predispatch-feature-amendment', 'apply-predispatch-feature-amendment', 'verify-predispatch-feature-amendment',
-                      'prepare-predispatch-recovery', 'qualify-predispatch-recovery', 'apply-predispatch-recovery', 'verify-predispatch-recovery'):
-            if args.command.endswith('predispatch-recovery'):
+                      'prepare-predispatch-recovery', 'qualify-predispatch-recovery', 'apply-predispatch-recovery', 'verify-predispatch-recovery',
+                      'preview-predispatch-corrective-rebind', 'prepare-predispatch-corrective-rebind', 'qualify-predispatch-corrective-rebind', 'apply-predispatch-corrective-rebind', 'verify-predispatch-corrective-rebind'):
+            if args.command.endswith('predispatch-corrective-rebind'):
+                from . import predispatch_corrective_rebind as rebind
+            elif args.command.endswith('predispatch-recovery'):
                 from . import predispatch_recovery as rebind
             elif args.command.endswith('feature-amendment'):
                 from . import predispatch_feature_amendment as rebind
@@ -239,13 +244,17 @@ def main(argv: list[str] | None = None) -> int:
             if args.command.endswith('predispatch-recovery'):
                 schemas.update({prefix + '-predispatch-recovery': schema for prefix, schema in
                     (('prepare', rebind.PrepareRequest), ('qualify', rebind.QualifyRequest), ('apply', rebind.ApplyRequest), ('verify', rebind.VerifyRequest))})
+            if args.command.endswith('predispatch-corrective-rebind'):
+                schemas.update({prefix + '-predispatch-corrective-rebind': schema for prefix, schema in
+                    (('preview', rebind.PrepareRequest), ('prepare', rebind.PrepareRequest), ('qualify', rebind.QualifyRequest), ('apply', rebind.ApplyRequest), ('verify', rebind.VerifyRequest))})
             request = request_file(args.request, schemas[args.command])
             store = Store(args.state_dir, tuple(args.worker_writable_root), read_only=True)
             if args.command.startswith('verify-predispatch-'):
                 result = rebind.verify(store, request)
             else:
                 lifecycle = Lifecycle.for_reading(store)
-                result = (rebind.prepare(lifecycle, request) if args.command.startswith('prepare-')
+                result = (rebind.preview(lifecycle, request) if args.command.startswith('preview-')
+                          else rebind.prepare(lifecycle, request) if args.command.startswith('prepare-')
                           else rebind.qualify(lifecycle, request) if args.command.startswith('qualify-')
                           else rebind.apply(lifecycle, request))
             print(json.dumps(result, indent=2))

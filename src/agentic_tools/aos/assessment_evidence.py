@@ -88,9 +88,13 @@ def _file_ref(store, path):
 
 def _authority(lifecycle, db, contract, work_id):
     from . import predispatch_feature_amendment as amendment
-    supplemental = contract.get('predispatch_recovery')
+    corrective = contract.get('predispatch_corrective_rebind')
+    supplemental = corrective or contract.get('predispatch_recovery')
     if supplemental is not None:
-        from . import predispatch_recovery as recovery
+        if corrective is not None:
+            from . import predispatch_corrective_rebind as recovery
+        else:
+            from . import predispatch_recovery as recovery
         require(isinstance(supplemental, dict) and set(supplemental) == {'operation_id', 'metadata_digest', 'allowances'} and recovery._schema(db),
                 'Exact applied supplemental recovery authority is required')
         row = db.execute(f'SELECT record FROM {recovery.TABLE} WHERE operation_id=? AND work_id=?',
@@ -267,7 +271,7 @@ def _context_in(lifecycle, db, assignment, *, commit, controller_digest, at, set
     require(actual == json.loads(assignment['candidate']) == json.loads(run['candidate']), 'Frozen exact AOS candidate differs')
     checkpoint = _checkpoint(lifecycle.store, controls, contract, full, commit, assignment['work_id'])
     from . import predispatch_feature_amendment as amendment
-    if receipt.get('format') == 'aos-predispatch-recovery-v1':
+    if receipt.get('format') in ('aos-predispatch-recovery-v1', 'aos-predispatch-corrective-rebind-v1'):
         from . import predispatch_recovery as recovery
         accounting = recovery.current_accounting(lifecycle.store, receipt, settled=settled, at=at)
     else:

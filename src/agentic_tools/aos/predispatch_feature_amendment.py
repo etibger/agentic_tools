@@ -439,7 +439,7 @@ def _readiness_pair(approved_reference, journal_entry):
     return approved
 
 
-def _journal(directory, prior_reference):
+def _journal(directory, prior_reference, *, observe_cleanup=True):
     value, reference = _json(directory / 'control/readiness.json')
     _require(value.get('format') == 'aos-readiness-v1' and type(value.get('max_seconds')) is int and
              30 <= value['max_seconds'] <= 600 and type(value.get('max_attempts')) is int and
@@ -456,7 +456,8 @@ def _journal(directory, prior_reference):
                  canonical({k: receipt.get('limits', {}).get(k) for k in ('max_attempts', 'max_seconds')}) ==
                  canonical({k: value[k] for k in ('max_attempts', 'max_seconds')}) and
                  receipt.get('cleanup_verified') is True, 'Readiness history or ownership changed')
-        readiness._verify_cached_cleanup(receipt, directory / 'runtime')
+        if observe_cleanup:
+            readiness._verify_cached_cleanup(receipt, directory / 'runtime')
     _require(value['runs'], 'Pinned prior readiness is not the journal tip')
     _readiness_pair(prior_reference, value['runs'][-1])
     return value, reference
@@ -708,7 +709,7 @@ def prepare(lifecycle, request):
         return {'packet_path': reference['path'], 'packet_sha256': reference['sha256'], 'packet': packet}
 
 
-def _validate_packet(store, packet, *, live_accounting=True, historical_engine_manifest=None):
+def _validate_packet(store, packet, *, live_accounting=True, historical_engine_manifest=None, observe_cleanup=True):
     _require(packet.get('format') == FORMAT, 'Unsupported settings refresh packet')
     m = packet['metadata']; old = m['original_contract']; origin = m['accounting_origin']
     _require(m['state_dir'] == str(store.directory) and m['worker_roots'] == list(map(str, store.worker_writable_roots)) and
@@ -763,7 +764,7 @@ def _validate_packet(store, packet, *, live_accounting=True, historical_engine_m
     _require(Path(result['resource_output']) == directory / 'outputs' / result['id'] and
              after['runs'][-1]['receipt'] == m['readiness_receipt']['path'] and
              after['runs'][-1]['sha256'] == m['readiness_receipt']['sha256'], 'Readiness result moved outside its original journal')
-    _journal(directory, m['readiness_receipt'])
+    _journal(directory, m['readiness_receipt'], observe_cleanup=observe_cleanup)
     _inputs(store, m['controller_contract'])
     decision = _approval(store, m['original_decision_id'], m['work_id'], old['concept_digest'])
     _require(json.loads(decision['package_snapshot']) == m['original_package'], 'Original approved package differs')

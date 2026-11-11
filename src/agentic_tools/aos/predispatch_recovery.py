@@ -170,7 +170,7 @@ def source_manifest(directory):
     return result
 
 
-def _historical(store, reference, engine_directory):
+def _historical(store, reference, engine_directory, *, observe_cleanup=True):
     """Verify original applied authority without pretending it is current authority."""
     ReceiptReference.model_validate(reference, strict=True)
     with store._connection() as db:
@@ -197,7 +197,7 @@ def _historical(store, reference, engine_directory):
     # The old validator still verifies every old source, recipe, decision and
     # journal. Only the running-engine comparison uses its independently read
     # exact historical source manifest instead of today's recovery engine.
-    previous._validate_packet(store, packet, live_accounting=False, historical_engine_manifest=manifest)
+    previous._validate_packet(store, packet, live_accounting=False, historical_engine_manifest=manifest, observe_cleanup=observe_cleanup)
     previous._approval(store, receipt['to_decision_id'], reference['work_id'], receipt['to_concept_digest'])
     return receipt, packet
 
@@ -237,7 +237,7 @@ def _closure(store, path, *, seen=None):
     return value
 
 
-def _controller(store, old, request):
+def _controller(store, old, request, *, marker='supplemental_recovery'):
     changes, after = {}, []
     before_refs = old['input_files']
     for change in request['source_changes']:
@@ -271,7 +271,9 @@ def _controller(store, old, request):
         require(not same_path or same_path == [ref], 'Conflicting input at retained path')
         if ref not in result['input_files']:
             result['input_files'].append(ref)
-    result['supplemental_recovery'] = {'operation_id': request['operation_id']}
+    result[marker] = {'operation_id': request['operation_id']}
+    if marker != 'supplemental_recovery':
+        require(result.get('supplemental_recovery') == old.get('supplemental_recovery'), 'Prior recovery marker changed')
     # No substitution may change accounting, product source or runtime authority.
     protected = ('format', 'work_id', 'state_dir', 'worker_roots', 'control_root', 'repository',
         'ack_root', 'kickoff_sha', 'baseline_inventory', 'stage_order', 'wall_seconds',
@@ -427,19 +429,19 @@ def _metadata_preflight(store, request, recipe, contract):
         max_seconds=request['allowances']['metadata_max_seconds'], max_attempts=1, native_checks=[])
 
 
-def _validate_packet(store, packet, *, snapshot=True, historical_runtime_identity=None):
+def _validate_packet(store, packet, *, snapshot=True, historical_runtime_identity=None, observe_cleanup=True):
     require(packet.get('format') == FORMAT, 'Unsupported supplemental recovery packet')
     request = packet['request']; PrepareRequest.model_validate(request, strict=True)
     m = packet['metadata']
     require(m['state_dir'] == str(store.directory) and
         m['worker_roots'] == list(map(str, store.worker_writable_roots)), 'Recovery ledger or worker scope differs')
-    prior, prior_packet = _historical(store, request['prior_amendment'], request['prior_engine_directory'])
+    prior, prior_packet = _historical(store, request['prior_amendment'], request['prior_engine_directory'], observe_cleanup=observe_cleanup)
     require(prior == m['original_amendment_receipt'] and
         prior_packet['metadata']['controller_contract'] == m['original_controller'], 'Original recovery basis changed')
     require((readiness._runtime_identity() if historical_runtime_identity is None else historical_runtime_identity) == m['runtime_identity'],
         'Exact reviewed recovery engine changed')
     if request.get('predecessor') is not None:
-        require(_failed_predecessor(store, request, snapshot=snapshot) == m['failed_predecessor'], 'Failed predecessor lineage changed')
+        require(_failed_predecessor(store, request, snapshot=snapshot, observe_cleanup=observe_cleanup) == m['failed_predecessor'], 'Failed predecessor lineage changed')
     new, new_ref = _controller(store, m['original_controller'], request)
     require(new == m['controller_contract'] and new_ref == m['controller_reference'], 'Recovery source template changed')
     require(previous._json(request['original_controller_contract_path'])[0] == m['original_controller'] and
@@ -466,7 +468,7 @@ def time_valid(deadline):
     return type(deadline) in (int, float) and math.isfinite(deadline) and time.time() < deadline
 
 
-def _failed_predecessor(store, request, *, snapshot=True):
+def _failed_predecessor(store, request, *, snapshot=True, observe_cleanup=True):
     """One successor to a positively settled, pre-role failure; never a reset."""
     predecessor = request['predecessor']
     require(Path(predecessor['packet']['path']).is_file() and Path(predecessor['qualification']['path']).is_file(),
@@ -504,9 +506,9 @@ def _failed_predecessor(store, request, *, snapshot=True):
     require(digest(source_manifest(predecessor['engine_directory'])) == identity['runtime_source_digest'] and
         {k: v for k, v in readiness._runtime_identity().items() if k != 'runtime_source_digest'} ==
         {k: v for k, v in identity.items() if k != 'runtime_source_digest'}, 'Exact failed recovery engine or runtime provenance differs')
-    _validate_packet(store, packet, snapshot=snapshot, historical_runtime_identity=identity)
+    _validate_packet(store, packet, snapshot=snapshot, historical_runtime_identity=identity, observe_cleanup=observe_cleanup)
     _qualification_result(store, packet, packet_ref, qualified_request, qualification,
-        failed=True, historical_runtime_identity=identity)
+        failed=True, historical_runtime_identity=identity, observe_cleanup=observe_cleanup)
     return {'packet': packet_ref, 'qualification': qualified_ref, 'operation_id': old_request['operation_id'],
         'decision_id': request['decision_id'], 'concept_digest': request['digest'],
         'engine_directory': predecessor['engine_directory'], 'engine_digest': identity['runtime_source_digest'],
@@ -657,7 +659,8 @@ def qualify(lifecycle, request):
         return value
 
 
-def _qualification_result(store, packet, packet_ref, request, value, *, failed=False, historical_runtime_identity=None):
+def _qualification_result(store, packet, packet_ref, request, value, *, failed=False, historical_runtime_identity=None,
+                          historical_engine_manifest=None, observe_cleanup=True):
     destination = Path(packet['request']['destination_directory'])
     expected_reservation = {'format': FORMAT, 'packet': packet_ref, 'request': request,
         'decision_id': request['decision_id'], 'metadata_attempts': 1,
@@ -668,7 +671,7 @@ def _qualification_result(store, packet, packet_ref, request, value, *, failed=F
     require(value['packet'] == packet_ref and value['request'] == request and
         previous._file(value['reservation']['path'], immutable=True)[1] == value['reservation'] and
         value['reservation']['path'] == str(destination / 'qualification-reservation.json'), 'Qualification authority differs')
-    journal, journal_ref = previous._journal(destination / 'readiness', value['receipt'])
+    journal, journal_ref = previous._journal(destination / 'readiness', value['receipt'], observe_cleanup=observe_cleanup)
     require(journal_ref == value['journal'] and len(journal['runs']) == 1 and journal['max_attempts'] == 1 and
         journal['max_seconds'] == packet['request']['allowances']['metadata_max_seconds'] and
         journal['state_dir'] == str(store.directory) and journal['source'] == packet['metadata']['recipe']['source'],
@@ -691,8 +694,13 @@ def _qualification_result(store, packet, packet_ref, request, value, *, failed=F
             isinstance(result.get('blockers'), list) and bool(result['blockers']),
             'Only a positively settled pre-role metadata failure can have a successor')
     else:
-        previous._ready_result(result, packet['metadata']['recipe'])
-    readiness._verify_cached_cleanup(result, destination / 'readiness/runtime')
+        if historical_engine_manifest is not None:
+            require(historical_runtime_identity == result.get('runtime_identity') and
+                digest(historical_engine_manifest) == historical_runtime_identity['runtime_source_digest'],
+                'Historical passed readiness runtime differs')
+        previous._ready_result(result, packet['metadata']['recipe'], historical_engine_manifest=historical_engine_manifest)
+    if observe_cleanup:
+        readiness._verify_cached_cleanup(result, destination / 'readiness/runtime')
 
 
 def apply(lifecycle, request):

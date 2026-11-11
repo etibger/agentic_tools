@@ -404,7 +404,7 @@ class Lifecycle:
         for field in exact:
             if field not in bounds or contract.get(field) != bounds[field]:
                 errors.append('Execution contract differs from approved ' + field)
-        for field in ('execution_policy', 'runtime_recipe', 'check_kinds', 'check_adapters', 'product_budget', 'adapter_architecture', 'assessment_evidence_gate', 'predispatch_feature_amendment', 'predispatch_recovery'):
+        for field in ('execution_policy', 'runtime_recipe', 'check_kinds', 'check_adapters', 'product_budget', 'adapter_architecture', 'assessment_evidence_gate', 'predispatch_feature_amendment', 'predispatch_recovery', 'predispatch_corrective_rebind'):
             if field in bounds or field in contract:
                 if contract.get(field) != bounds.get(field):
                     errors.append('Execution contract differs from approved ' + field)
