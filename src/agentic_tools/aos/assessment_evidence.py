@@ -88,6 +88,27 @@ def _file_ref(store, path):
 
 def _authority(lifecycle, db, contract, work_id):
     from . import predispatch_feature_amendment as amendment
+    supplemental = contract.get('predispatch_recovery')
+    if supplemental is not None:
+        from . import predispatch_recovery as recovery
+        require(isinstance(supplemental, dict) and set(supplemental) == {'operation_id', 'metadata_digest', 'allowances'} and recovery._schema(db),
+                'Exact applied supplemental recovery authority is required')
+        row = db.execute(f'SELECT record FROM {recovery.TABLE} WHERE operation_id=? AND work_id=?',
+                         (supplemental['operation_id'], work_id)).fetchone()
+        require(row is not None, 'Applied supplemental recovery receipt is missing')
+        saved = json.loads(row[0])
+        ref = {'operation_id': supplemental['operation_id'], 'work_id': work_id, 'receipt_digest': digest(saved)}
+        receipt = recovery.verify(lifecycle.store, ref)
+        packet = _read(lifecycle.store, receipt['packet'])
+        controls = packet['metadata']['controller_contract']
+        resource = packet['request']['controller_resource']
+        prefix = resource[:-len(digest(packet['metadata']['original_controller']))]
+        require(digest(packet['metadata']) == supplemental['metadata_digest'] and
+                packet['request']['allowances'] == supplemental['allowances'] and
+                receipt['to_concept_digest'] == contract['concept_digest'] and
+                receipt['to_recipe_digest'] == contract['runtime_recipe_digest'] and
+                prefix + digest(controls) in contract['resources'], 'Supplemental authority or controller differs')
+        return receipt, controls, ref
     marker = contract.get('predispatch_feature_amendment')
     require(isinstance(marker, dict) and set(marker) == {'operation_id', 'metadata_digest'} and amendment._schema(db),
             'Exact applied feature amendment authority is required')
@@ -246,7 +267,11 @@ def _context_in(lifecycle, db, assignment, *, commit, controller_digest, at, set
     require(actual == json.loads(assignment['candidate']) == json.loads(run['candidate']), 'Frozen exact AOS candidate differs')
     checkpoint = _checkpoint(lifecycle.store, controls, contract, full, commit, assignment['work_id'])
     from . import predispatch_feature_amendment as amendment
-    accounting = amendment.current_accounting(lifecycle.store, receipt, settled=settled, at=at)
+    if receipt.get('format') == 'aos-predispatch-recovery-v1':
+        from . import predispatch_recovery as recovery
+        accounting = recovery.current_accounting(lifecycle.store, receipt, settled=settled, at=at)
+    else:
+        accounting = amendment.current_accounting(lifecycle.store, receipt, settled=settled, at=at)
     for ref in checkpoint['references']:
         row = _read(lifecycle.store, ref)
         if 'ack' not in row:

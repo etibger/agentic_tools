@@ -462,7 +462,7 @@ def _journal(directory, prior_reference):
     return value, reference
 
 
-def _ready_result(result, recipe):
+def _ready_result(result, recipe, *, historical_engine_manifest=None):
     roles = result.get('roles', [])
     _require(len(roles) == 2 and {r.get('role') for r in roles} == {'implementation', 'assessment'} and
              all(r.get('passed') is True and r.get('configuration_verified') is True and r.get('model_turns') == 0 and
@@ -473,7 +473,7 @@ def _ready_result(result, recipe):
              result.get('cleanup_verified') is True and result.get('readiness_scope') == 'model-metadata-only' and
              result.get('requested_native_checks') == [] and result.get('native', {}).get('checks') == [] and
              result.get('native', {}).get('execution') == 'not_requested' and
-             result.get('prepared_recipe') == recipe and result.get('runtime_identity') == readiness._runtime_identity(),
+             result.get('prepared_recipe') == recipe and (result.get('runtime_identity') == readiness._runtime_identity() if historical_engine_manifest is None else result.get('runtime_identity', {}).get('runtime_source_digest') == digest(historical_engine_manifest)),
              'Actual bounded metadata readiness did not pass for this recipe')
 
 
@@ -708,16 +708,17 @@ def prepare(lifecycle, request):
         return {'packet_path': reference['path'], 'packet_sha256': reference['sha256'], 'packet': packet}
 
 
-def _validate_packet(store, packet, *, live_accounting=True):
+def _validate_packet(store, packet, *, live_accounting=True, historical_engine_manifest=None):
     _require(packet.get('format') == FORMAT, 'Unsupported settings refresh packet')
     m = packet['metadata']; old = m['original_contract']; origin = m['accounting_origin']
     _require(m['state_dir'] == str(store.directory) and m['worker_roots'] == list(map(str, store.worker_writable_roots)) and
-             readiness._runtime_identity()['runtime_source_digest'] == m['engine_digest'], 'Ledger, roots or qualified engine changed')
+             (readiness._runtime_identity()['runtime_source_digest'] if historical_engine_manifest is None else digest(historical_engine_manifest)) == m['engine_digest'], 'Ledger, roots or qualified engine changed')
     _require(packet['concept'] == _concept(m, packet['request']), 'Technical concept exceeds the exact allowed feature amendment')
     _recipe_delta(old['runtime_recipe'], m['recipe'], m['controller_contract'])
     expected_recipe = _json(m['recipe_template_reference']['path'])[0]
     expected_recipe['instruction_manifest'] = m['recipe']['instruction_manifest']
-    _require(m['recipe'] == expected_recipe and instructions.readback(m['recipe']['instruction_manifest'], Path(m['recipe']['source']))['manifest'] == m['recipe']['instruction_manifest'], 'Recipe or current instructions changed')
+    _require(m['recipe'] == expected_recipe and (historical_engine_manifest is not None or
+             instructions.readback(m['recipe']['instruction_manifest'], Path(m['recipe']['source']))['manifest'] == m['recipe']['instruction_manifest']), 'Recipe or current instructions changed')
     _require(_json(m['concept_update_reference']['path'])[0] == m['concept_update'], 'Exact revised concept body changed')
     for key in ('original_controller_reference', 'controller_template_reference', 'recipe_template_reference', 'concept_update_reference', 'readiness_journal', 'readiness_receipt', 'prepared_recipe', 'prepared_receipt'):
         _require(_file(m[key]['path'])[1] == m[key], 'Retained preparation input changed')
@@ -741,7 +742,7 @@ def _validate_packet(store, packet, *, live_accounting=True):
     result = _json(m['readiness_receipt']['path'])[0]
     _require(_json(m['prepared_recipe']['path'])[0] == m['recipe'] and _json(m['prepared_receipt']['path'])[0] == result,
              'Retained readiness copies differ')
-    _ready_result(result, m['recipe'])
+    _ready_result(result, m['recipe'], historical_engine_manifest=historical_engine_manifest)
     _require(all(result.get('limits', {}).get(k) == after[k] for k in ('max_attempts', 'max_seconds')),
              'Prepared metadata allowance changed')
     directory = Path(m['readiness_journal']['path']).parent.parent

@@ -129,6 +129,10 @@ Run the coordinator from an already authorized chat or administrator context. Th
 | `prepare-predispatch-feature-amendment --request FILE` | Prepare the exact selected pre-dispatch feature/finite-allowance amendment using the original readiness journal, without execution. |
 | `apply-predispatch-feature-amendment --request FILE` | After its distinct exact saved approval, compare-and-swap the held contract; preserve original accounting and no admission. |
 | `verify-predispatch-feature-amendment --request FILE` | Verify saved amendment authority, unchanged physical clock and every retained original/later operation receipt. |
+| `prepare-predispatch-recovery --request FILE` | Retain an exact supplemental recovery proposal for already-amended, held work without spending a metadata attempt. |
+| `qualify-predispatch-recovery --request FILE` | After its saved approval, reserve and run the one explicitly granted supplemental metadata attempt. |
+| `apply-predispatch-recovery --request FILE` | Apply the exact approved recovery after metadata passes; preserve historical authority and leave work held. |
+| `verify-predispatch-recovery --request FILE` | Read back the applied recovery, source bindings, allowance chain and original accounting. |
 | `status WORK_ID` | Read the durable work record. `--surface service` and `--surface dashboard` project the same authoritative records. |
 | `pause`, `resume`, `cancel` | Delegate to existing lifecycle control and owned-effect reconciliation. |
 | `worker` | Run the existing worker with an explicit cycle cap and either `--fake-plan` or the separately approved `--runtime-recipes`. |
@@ -597,3 +601,98 @@ read access; only the sanitized writer descriptor and helper API belong in the
 existing approved-inputs surface. The helper and its sibling coverage contract
 each require an explicit saved input pin. Final command outputs are restricted
 to the released assignment, attempt and phase's exact evidence directory.
+
+### Supplemental recovery before first dispatch
+
+Use supplemental recovery when an already-applied feature amendment needs an
+exact helper or controller correction and its original metadata allowance is
+exhausted. The original ledger must still show held, unadmitted work with no
+product assignments, materialized product budget, active owner or unresolved
+effects. Coordinator operations must be settled. This route retains the prior
+amendment and every approval, readiness result, reservation and charge; it does
+not reopen the one-per-work amendment or edit a frozen helper in place.
+
+Prepare reviewed successor files at new protected paths. The proposal binds the
+current work revision and decision, exact prior amendment receipt, original
+readiness journal, old and new source references, preserved prior engine,
+successor engine identity and prospective allowances. Retain the old engine
+directory: its exact source manifest is needed to verify historical authority.
+Only explicitly declared file-reference replacements and additional pinned
+inputs are eligible. Changed bytes are restricted to Python implementation and
+reference-only integrity manifests; relocating another input requires identical
+bytes. Product behavior, recipe execution, model roles, permissions, native
+checks and product allowance remain bound. An arbitrary contract change cannot be
+smuggled into a source refresh.
+
+An optional `recipe_path` may refresh only the instruction manifest's
+configuration hashes and byte counts. Every changed configuration requires a
+`configuration_refresh` entry containing `path`, `before_sha256`, `after_sha256`
+and `replacements`; each replacement contains `key`, `before` and `after`.
+Only the plain quoted top-level `model` and `model_reasoning_effort` defaults are
+eligible, while each job's explicit model and effort remain unchanged. The
+verifier reconstructs the exact historical bytes in memory from the current
+file and requires their original SHA-256 and length. Parsed TOML must also show
+every other setting unchanged. Paths, aliases, discovery chain, support files,
+runtime overrides and all other configuration bytes remain fixed. This grants
+no general configuration refresh. Historical contents are neither rewritten
+nor retained in the recovery packet; the exact prospective manifest and proof
+are bound to the new saved decision before metadata qualification.
+
+The operator sequence is:
+
+1. Run `prepare-predispatch-recovery --request FILE` against freshly read status.
+   Preparation retains an immutable packet, its exact `concept` request and one
+   durable recovery intent for the work. It leaves the registered contract and
+   work revision unchanged and runs no metadata, model turn, native check or VM
+   operation. This is the single supplemental recovery intent for that work;
+   choose the complete reviewed proposal before preparing it.
+2. Present `packet.concept` through `present-concept`, then use
+   `prepare-decision` and the ordinary human decision page. Do not substitute
+   tool permission, a model message or a local receipt for the saved decision,
+   and do not call `register-contract` for this recovery.
+3. After the exact approval is saved, run
+   `qualify-predispatch-recovery --request FILE`. The approved supplemental
+   allowance grants one metadata-only attempt of 30–600 seconds. Its namespaced
+   journal binds the original exhausted journal and reserves the attempt before
+   launch. The original three-attempt journal and all its failed results remain
+   unchanged.
+4. If metadata passes, run `apply-predispatch-recovery --request FILE`, then
+   `verify-predispatch-recovery --request FILE` and read current status. Apply
+   atomically binds the approved successor while leaving the work held and
+   unadmitted, with all technical prerequisites requiring fresh evidence. It
+   neither changes the physical clock nor starts a runtime slot.
+
+Qualification and application use the same exact `ApplyRequest` fields:
+`operation_id`, `work_id`, `expected_work_revision`, the new concept `digest`,
+saved `decision_id`, `packet_path` and `packet_sha256`. Qualification does not
+advance the work revision. Verification takes `operation_id`, `work_id` and
+the applied `receipt_digest`.
+
+The decision must explicitly name every additional runtime slot: one to four
+distinct new names, each at most 10800 seconds, with a prospective total and
+effective lifetime ceiling. Existing consumed slots cannot be reused or
+refunded, and unallocated aggregate seconds do not authorize another attempt.
+The prepared concept appends a deterministic authority statement derived from
+these exact allowances, including the coordinator ceiling it supersedes.
+The accounting origin, original start and original feature deadline remain
+unchanged. Reconcile the remaining delivery forecast against that deadline
+before requesting approval. This operation cannot grant a deadline extension;
+if the remaining plan cannot fit, keep work held and obtain a separately
+supported plan instead.
+
+Keep each operation ID and its complete request stable across retries. A
+successful completed qualification or application can verify and read back its
+retained result. A failed qualification stays rejected on replay. A stale
+revision, changed decision, changed source or conflicting concurrent recovery is rejected.
+Metadata failure or interruption consumes the reserved supplemental attempt;
+neither a new directory nor a new operation ID creates a replacement allowance.
+An uncertain reservation or incomplete cleanup remains a hold. Preserve the
+evidence and resolve the reported condition through a supported operation.
+
+Passing isolated regression tests proves the tooling behavior exercised by
+those tests. A passing supplemental metadata attempt proves only metadata
+readiness. Neither establishes the corrected live observer's result, VM
+transition, backend implementation or runtime qualification. Hand the exact
+verified recovery receipt and finite new slot names to the delivery coordinator,
+which must obtain actual runtime evidence before ordinary prerequisite
+reconciliation and admission.
