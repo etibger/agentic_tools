@@ -850,3 +850,64 @@ The retained invocation procedure must identify the current entry, interpreter,
 working directory and module-file context as well as its fixed environment.
 Harmless child-launch tests establish those tested boundaries only; they do not
 prove that the live observer or native runtime has passed.
+
+### Explicit observation coordination for nested owned commands
+
+The maintained `owned_host_command.run_owned` API accepts optional
+`observation_lock` coordination for nested callers. The caller precreates an
+empty, single-link regular file with mode `0600` in an owned, canonical `0700`
+directory and passes its exact binding: `path`, `device`, `inode`, `uid`, `mode`
+and `nlink`. The path is an absolute canonical string, `uid` is the effective
+user ID, `mode` is the full `stat.S_IFREG | 0o600` value, and `nlink` is `1`.
+Keep this control file outside workload-writable output and explicitly propagate
+the same binding to every nested participant. The API does not create the file,
+discover a shared lock, or infer coordination from an environment variable.
+
+The API opens the bound inode without following symlinks, checks its identity
+and private parent, and serializes the complete census decision. The protected
+interval includes the observation helper, parsing, native identity checks,
+ownership classification and process-group decision. Lock acquisition and an
+accepted observation share a maximum five-second budget within the original
+operation or cleanup deadline; helper cleanup retains its original cleanup
+bound. Contention grants no additional time. This changes no UID, executable
+name or process-ownership rule and supplies no exemption for nested observers.
+
+With an explicit binding, a final `CLEAN` admission fence runs after all
+`before_go`, admission-persistence and cancellation callbacks. It covers fresh
+supervisor PID/UID/birth/parent/group and non-zombie checks, the retained cancel
+marker and original deadline checks, and the actual `G` write, flush and close.
+No callback or persistence hook runs inside that interval. This fence starts no
+observation helper, writes no `ACTIVE` claim and uses the same bounded original
+allowance; a hold introduced by an earlier callback cannot cross admission.
+
+An empty file is `CLEAN`. Before spawning an observation helper, the API writes
+and synchronizes an `ACTIVE` claim to that same inode. It clears the claim only
+after positive helper reap, pipe EOF and closed stdout/stderr evidence. Retained
+`ACTIVE` or partial nonempty publication blocks later observers; there is no
+reset or reclaim API. If helper cleanup remains unknown but that exact inode
+was unexpectedly emptied, the API attempts to restore a nonempty `POISON`
+record. It never writes or adopts a substituted file. If restoration cannot be
+verified and the same bound inode is still empty, it retains the exact locked,
+non-inheritable descriptor for the process's lifetime. This fallback is not
+durable protection across process death; the error explicitly records that
+durability remains unknown. A clearing/synchronization failure after positively
+verified helper cleanup may leave an empty inode, but still fails the command.
+Coordination failures remain sticky in
+`observation_coordination: {"failed": true}` and prevent verified cleanup,
+including when the workload itself never launched. Do not truncate, replace or
+recreate a held file to retry the operation.
+
+New receipts retain `observation_lock` and `observation_coordination`; saved
+reconciliation uses that exact binding. Structural inspection can still read a
+held receipt and request cancellation from its live controller, without treating
+the lock as clean or granting new observation authority.
+`verify_completed(snapshot, *, deadline=None)` may wait for a healthy outer
+observation to finish for at most five seconds and only within the receipt's
+remaining original cleanup deadline. Its optional finite numeric deadline is
+absolute monotonic time and can only shorten that saved wait bound;
+`reconcile_owned` forwards its caller's deadline to the terminal shortcut.
+After either bound expires, verification performs an immediate nonblocking
+`CLEAN` check, spawning no helper and granting no renewed allowance. A busy or
+nonempty binding remains held.
+Historical receipts without these optional fields keep their existing behavior;
+they are not retroactively coordinated or upgraded into stronger cleanup proof.

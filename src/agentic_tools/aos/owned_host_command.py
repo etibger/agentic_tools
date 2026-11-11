@@ -7,6 +7,8 @@ No function in this module retries a command.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
+import fcntl
 import hashlib
 import json
 import math
@@ -31,7 +33,10 @@ REAP_SECONDS = 3
 PIPE_SECONDS = 2
 MAX_STREAM_BYTES = 128 * 1024 * 1024
 MAX_OBSERVED = 16384
+OBSERVATION_SECONDS = 5
+MAX_OBSERVATION_STATE = 4096
 _RETAINED_PROCESSES = []  # Preserve direct ownership if bounded cleanup cannot finish.
+_RETAINED_OBSERVATION_LOCKS = []  # Process-lifetime hold when durable poison cannot be retained.
 
 
 def _error(errors, label, error):
@@ -48,6 +53,200 @@ def _close(handle, errors, label):
 
 def _same(current, original):
     return native_processes.same(original, current)
+
+
+def _observation_binding(value):
+    """Validate data only; a poisoned binding must remain readable as evidence."""
+    fields = {'path', 'device', 'inode', 'uid', 'mode', 'nlink'}
+    if (not isinstance(value, dict) or set(value) != fields
+            or not isinstance(value['path'], str) or not value['path']
+            or '\x00' in value['path']
+            or any(type(value[key]) is not int for key in fields - {'path'})
+            or value['device'] < 0 or value['inode'] <= 0 or value['uid'] < 0
+            or value['mode'] != stat.S_IFREG | 0o600 or value['nlink'] != 1):
+        raise ValueError('Expected an exact private observation lock binding')
+    path = Path(value['path'])
+    if not path.is_absolute() or str(path) != value['path']:
+        raise ValueError('Observation lock path must be absolute and canonical')
+    return dict(value)
+
+
+def _check_observation_file(binding, descriptor=None):
+    path = Path(binding['path'])
+    if path.resolve(strict=True) != path:
+        raise RuntimeError('Observation lock path changed or contains a symlink')
+    parent = path.parent.lstat()
+    if parent.st_mode != stat.S_IFDIR | 0o700 or parent.st_uid != os.geteuid():
+        raise RuntimeError('Observation lock requires its exact private parent directory')
+    info = path.lstat()
+    actual = {'path': str(path), 'device': info.st_dev, 'inode': info.st_ino,
+              'uid': info.st_uid, 'mode': info.st_mode, 'nlink': info.st_nlink}
+    if actual != binding or info.st_uid != os.geteuid():
+        raise RuntimeError('Observation lock file identity or permissions changed')
+    if descriptor is not None:
+        opened = os.fstat(descriptor)
+        if any(getattr(opened, name) != getattr(info, name) for name in
+               ('st_dev', 'st_ino', 'st_uid', 'st_mode', 'st_nlink')):
+            raise RuntimeError('Observation lock descriptor no longer names its bound file')
+        return opened
+    return info
+
+
+def _observation_time(deadline):
+    if time.monotonic() >= deadline:
+        raise TimeoutError('Original observation budget expired')
+
+
+def _observation_identity(deadline):
+    def read(pid):
+        _observation_time(deadline)
+        value = native_processes.identity(pid)
+        _observation_time(deadline)
+        return value
+    return read
+
+
+def _check_observation_claim(descriptor, claim):
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    if os.read(descriptor, MAX_OBSERVATION_STATE + 1) != claim:
+        raise RuntimeError('Active observation coordination claim changed')
+
+
+def _poison_empty_observation(binding, descriptor):
+    """Restore a hold only on the same unexpectedly emptied coordination inode."""
+    if _check_observation_file(binding, descriptor).st_size != 0:
+        return
+    poison = json.dumps({'format': 'owned-observation-poison-v1',
+        'observation_lock': binding, 'controller_pid': os.getpid(),
+        'helper_cleanup_verified': False}, sort_keys=True, separators=(',', ':')).encode()
+    if len(poison) > MAX_OBSERVATION_STATE:
+        raise ValueError('Observation poison record exceeds its bound')
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    written = os.write(descriptor, poison)
+    os.fsync(descriptor)  # Even a partial nonempty write must retain its hold.
+    if written != len(poison):
+        raise OSError('Incomplete observation poison record')
+    _check_observation_file(binding, descriptor)
+    _check_observation_claim(descriptor, poison)
+
+
+@contextmanager
+def _observation_fence(binding, deadline, audit=None, *, status=None):
+    """Serialize complete census decisions, retaining unknown helper cleanup.
+
+    An empty, precreated inode is CLEAN. Before a helper can be spawned, ACTIVE
+    is written and synced without truncating that inode. Only fresh direct
+    reap/EOF/closed-handle evidence may clear it. A crash or unknown cleanup
+    therefore leaves a durable hold; this API never reclaims or resets it.
+    deadline=None is solely a nonblocking CLEAN check without any observation.
+    """
+    if binding is None:
+        yield deadline
+        return
+    binding = _observation_binding(binding)
+    if deadline is None and audit is not None:
+        raise ValueError('An observation requires its original deadline')
+    if deadline is not None and (type(deadline) not in (int, float) or not math.isfinite(deadline)):
+        raise ValueError('A finite original observation deadline is required')
+    until = None if deadline is None else min(deadline, time.monotonic() + OBSERVATION_SECONDS)
+    status = {} if status is None else status
+    status.setdefault('failed', False)
+    descriptor = None
+    locked = entered = False
+    start = len(audit) if audit is not None else None
+    try:
+        _check_observation_file(binding)
+        descriptor = os.open(binding['path'], os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC)
+        os.set_inheritable(descriptor, False)
+        while True:
+            _check_observation_file(binding, descriptor)
+            if until is not None:
+                _observation_time(until)
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                locked = True
+                break
+            except BlockingIOError:
+                if until is None:
+                    raise RuntimeError('Observation coordination is busy; completion remains held')
+                available = until - time.monotonic()
+                if available <= 0:
+                    raise TimeoutError('Original observation budget expired waiting for coordination')
+                time.sleep(min(.025, available))
+        if _check_observation_file(binding, descriptor).st_size != 0:
+            raise RuntimeError('Observation coordination retains ACTIVE or unknown helper cleanup')
+        if until is not None:
+            _observation_time(until)
+        if audit is not None:
+            claim = json.dumps({'format': 'owned-observation-active-v1',
+                'observation_lock': binding, 'controller_pid': os.getpid(),
+                'deadline_monotonic': until}, sort_keys=True, separators=(',', ':')).encode()
+            if len(claim) > MAX_OBSERVATION_STATE:
+                raise ValueError('Observation coordination claim exceeds its bound')
+            # The inode was empty. Never truncate before writing ACTIVE: a
+            # partial write must itself remain a durable nonempty hold.
+            if os.write(descriptor, claim) != len(claim):
+                raise OSError('Incomplete observation coordination claim')
+            os.fsync(descriptor)
+            _check_observation_file(binding, descriptor)
+            _check_observation_claim(descriptor, claim)
+            _observation_time(until)
+        entered = True
+        try:
+            yield until
+        finally:
+            fresh = audit[start:] if audit is not None else []
+            helper_clean = bool(fresh) and all(all(item.get(key) is True for key in
+                ('reaped', 'pipes_eof', 'stdout_closed', 'stderr_closed')) for item in fresh)
+            try:
+                _check_observation_file(binding, descriptor)
+                if audit is not None:
+                    _check_observation_claim(descriptor, claim)
+                    if not helper_clean:
+                        raise RuntimeError('Observation helper cleanup is unknown; coordination remains ACTIVE')
+                    os.ftruncate(descriptor, 0)
+                    os.fsync(descriptor)
+                elif os.fstat(descriptor).st_size != 0:
+                    raise RuntimeError('Observation coordination changed during its CLEAN check')
+                _check_observation_file(binding, descriptor)
+            except BaseException:
+                status['failed'] = True
+                if audit is not None and not helper_clean:
+                    try:
+                        _poison_empty_observation(binding, descriptor)
+                    except BaseException as error:
+                        held = False
+                        try:
+                            held = _check_observation_file(binding, descriptor).st_size == 0
+                        except BaseException:
+                            pass  # A substituted path must never be changed or adopted.
+                        if held:
+                            _RETAINED_OBSERVATION_LOCKS.append(descriptor)
+                            descriptor = None
+                        protection = ('; exact locked descriptor retained for process lifetime only'
+                                      if held else '')
+                        raise RuntimeError('Observation helper cleanup remains unknown; durable POISON '
+                            'could not be verified' + protection + ': ' + type(error).__name__ + ': '
+                            + str(error)) from error
+                raise
+    except BaseException:
+        if not entered:
+            status['failed'] = True
+        raise
+    finally:
+        if descriptor is not None:
+            try:
+                if locked:
+                    fcntl.flock(descriptor, fcntl.LOCK_UN)
+            except BaseException:
+                status['failed'] = True
+                raise
+            finally:
+                try:
+                    os.close(descriptor)
+                except BaseException:
+                    status['failed'] = True
+                    raise
 
 
 def select_owned(rows, leader, retained, identity_reader=None):
@@ -104,6 +303,7 @@ def _observe(deadline, audit, *, cleanup_deadline=None):
         raise TimeoutError('Census deadline expired')
     cleanup_deadline = deadline + 1 if cleanup_deadline is None else cleanup_deadline
     record = {'owner': None, 'exit_code': None, 'reaped': False, 'pipes_eof': False,
+              'stdout_closed': False, 'stderr_closed': False,
               'interrupted': False, 'errors': [], 'identity_diagnostic': None,
               'ownership_basis': None, 'output_valid': False, 'executable_metadata': None}
     process = None
@@ -177,6 +377,8 @@ def _observe(deadline, audit, *, cleanup_deadline=None):
             record['reaped'] = process.returncode is not None
             _close(process.stdout, record['errors'], 'census stdout close')
             _close(process.stderr, record['errors'], 'census stderr close')
+            record['stdout_closed'] = process.stdout is not None and process.stdout.closed
+            record['stderr_closed'] = process.stderr is not None and process.stderr.closed
             if not record['reaped']:
                 _RETAINED_PROCESSES.append(process)
         record['stdout_bytes'] = len(output)
@@ -191,6 +393,7 @@ def _observe(deadline, audit, *, cleanup_deadline=None):
             raise ValueError('Census output exceeded its bounded size')
         rows = {}
         for line in output.decode('ascii').splitlines():
+            _observation_time(deadline)
             fields = line.split()
             if len(fields) != 4:
                 raise ValueError('Malformed census row')
@@ -297,13 +500,16 @@ def request_cancel(control):
 
 
 def run_owned(argv, cwd, environment, control, *, deadline, cleanup_deadline=None,
-              before_go=None, cancelled=None, persist=None) -> dict:
+              before_go=None, cancelled=None, persist=None, observation_lock=None) -> dict:
     """Run literal argv once under its original absolute monotonic deadline.
 
     persist(snapshot) records prepared, verified-owner, admission, progress and
     terminal states. Verified ownership must be saved before G. Callback errors
     stop admission or remain sticky failures after admission. Host-mode control
     files are cooperative records, not protection against same-user commands.
+    Nested observers may explicitly share one precreated private observation
+    lock binding. The lock covers census and ownership classification only;
+    unknown ancillary cleanup leaves its durable ACTIVE claim unreclaimable.
     """
     if (not isinstance(argv, (list, tuple)) or not argv
             or any(not isinstance(value, str) or not value or '\x00' in value for value in argv)):
@@ -325,6 +531,8 @@ def run_owned(argv, cwd, environment, control, *, deadline, cleanup_deadline=Non
         raise ValueError('An explicit string environment is required')
     if not SUPERVISOR.is_file():
         raise ValueError('Maintained supervisor sibling is required')
+    if observation_lock is not None:
+        observation_lock = _observation_binding(observation_lock)
     cwd = Path(cwd).resolve(strict=True)
     if not cwd.is_dir():
         raise ValueError('Command cwd must be an existing directory')
@@ -347,6 +555,10 @@ def run_owned(argv, cwd, environment, control, *, deadline, cleanup_deadline=Non
         'errors': errors, 'census_commands': census_commands,
         'environment_sha256': hashlib.sha256(json.dumps(dict(environment), sort_keys=True, separators=(',', ':')).encode()).hexdigest(),
         'limitation': 'Observed owners only; does not exclude unobserved detached escapes.'}
+    coordination = None
+    if observation_lock is not None:
+        report['observation_lock'] = observation_lock
+        coordination = report['observation_coordination'] = {'failed': False}
     status_path, release_path = control / 'status.json', control / 'release'
     process = owner = None
     logs, readers, streams = [], [], []
@@ -390,16 +602,22 @@ def run_owned(argv, cwd, environment, control, *, deadline, cleanup_deadline=Non
         return min(limit, available)
 
     def observe(until):
-        rows = _observe(until, census_commands, cleanup_deadline=report['cleanup_deadline_monotonic'])
-        live, members = select_owned(rows, owner, owned)
-        previous_count = len(owned)
-        for pid, item in members.items():
-            owned.setdefault(pid, item)
-        if len(owned) > MAX_OBSERVED:
-            raise RuntimeError('Owned process evidence bound exceeded')
-        group_members = {pid: row for pid, row in rows.items()
-                         if row['group'] == owner['pid'] and pid != owner['pid']}
-        report['owned_remaining'] = {str(pid): item for pid, item in members.items()}
+        with _observation_fence(observation_lock, until, census_commands,
+                                status=coordination) as observation_deadline:
+            rows = _observe(observation_deadline, census_commands,
+                            cleanup_deadline=report['cleanup_deadline_monotonic'])
+            reader = _observation_identity(observation_deadline) if observation_lock is not None else None
+            live, members = select_owned(rows, owner, owned, identity_reader=reader)
+            previous_count = len(owned)
+            for pid, item in members.items():
+                owned.setdefault(pid, item)
+            if len(owned) > MAX_OBSERVED:
+                raise RuntimeError('Owned process evidence bound exceeded')
+            group_members = {pid: row for pid, row in rows.items()
+                             if row['group'] == owner['pid'] and pid != owner['pid']}
+            report['owned_remaining'] = {str(pid): item for pid, item in members.items()}
+            if observation_lock is not None:
+                _observation_time(observation_deadline)
         if len(owned) != previous_count or time.monotonic() - last_checkpoint >= 1:
             try:
                 checkpoint('running' if not errors else 'cleanup_unknown')
@@ -413,6 +631,8 @@ def run_owned(argv, cwd, environment, control, *, deadline, cleanup_deadline=Non
             raise RuntimeError('No verified controller identity')
         checkpoint('prepared')
         check_cancel()
+        with _observation_fence(observation_lock, deadline, status=coordination):
+            pass  # Known poison must hold before any supervisor/payload launch.
         if time.monotonic() >= deadline:
             raise TimeoutError('Command deadline expired before supervisor launch')
         (control / 'command.json').write_text(json.dumps({
@@ -454,12 +674,26 @@ def run_owned(argv, cwd, environment, control, *, deadline, cleanup_deadline=Non
         report['launch_claimed'] = True
         checkpoint('admitting')
         check_cancel()
-        if time.monotonic() >= deadline:
-            raise TimeoutError('Command deadline expired while saving admission')
-        launched = True  # A partial control write must be treated as possibly admitted.
-        process.stdin.write(b'G')
-        process.stdin.flush()
-        process.stdin.close()
+        # Callbacks above may have waited while another observer left a hold.
+        # Keep the final CLEAN check and actual admission write in one fence;
+        # no callback or persistence hook may run inside this critical region.
+        with _observation_fence(observation_lock, deadline,
+                                status=coordination) as admission_deadline:
+            if observation_lock is not None:
+                current_owner = _observation_identity(admission_deadline)(process.pid)
+                if (not _same(current_owner, owner) or current_owner['status'] == 5
+                        or any(current_owner[key] != owner[key] for key in ('parent', 'group'))):
+                    raise RuntimeError('Supervisor identity/liveness changed at final admission')
+                if _cancelled(control, None):  # Read the marker without invoking a callback.
+                    report['cancel_requested'] = True
+                    raise InterruptedError('Owned command cancellation requested at final admission')
+                _observation_time(admission_deadline)
+            if time.monotonic() >= deadline:
+                raise TimeoutError('Command deadline expired while saving admission')
+            launched = True  # A partial control write must be treated as possibly admitted.
+            process.stdin.write(b'G')
+            process.stdin.flush()
+            process.stdin.close()
         checkpoint('running')
         while True:
             check_cancel()
@@ -552,15 +786,21 @@ def run_owned(argv, cwd, environment, control, *, deadline, cleanup_deadline=Non
                 report['owner_reaped'] = process.returncode is not None
                 if report['owner_reaped']:
                     report['owner_absent'] = owner is not None and not _same(native_processes.identity(process.pid), owner)
-                    rows = _observe(time.monotonic() + remaining(5), census_commands,
-                                    cleanup_deadline=report['cleanup_deadline_monotonic'])
-                    report['group_empty'] = not any(row['group'] == process.pid for row in rows.values())
-                    remaining_owners = {}
-                    for pid, saved in owned.items():
-                        current = native_processes.identity(pid)
-                        if _same(current, saved):
-                            remaining_owners[str(pid)] = current
-                    report['owned_remaining'] = remaining_owners
+                    with _observation_fence(observation_lock, time.monotonic() + remaining(5),
+                                            census_commands, status=coordination) as observation_deadline:
+                        rows = _observe(observation_deadline, census_commands,
+                                        cleanup_deadline=report['cleanup_deadline_monotonic'])
+                        report['group_empty'] = not any(row['group'] == process.pid for row in rows.values())
+                        remaining_owners = {}
+                        reader = (_observation_identity(observation_deadline) if observation_lock is not None
+                                  else native_processes.identity)
+                        for pid, saved in owned.items():
+                            current = reader(pid)
+                            if _same(current, saved):
+                                remaining_owners[str(pid)] = current
+                        report['owned_remaining'] = remaining_owners
+                        if observation_lock is not None:
+                            _observation_time(observation_deadline)
                 else:
                     _RETAINED_PROCESSES.append(process)
             else:
@@ -610,6 +850,8 @@ def run_owned(argv, cwd, environment, control, *, deadline, cleanup_deadline=Non
             report['owner_reaped'] and report['owner_absent'] and report['group_empty']
             and not report['owned_remaining'] and report['pipes_eof'] and report['readers_joined']
             and report['stdin_closed'] and report['output_files_closed'] and ancillary_clean))
+        if coordination is not None and coordination['failed']:
+            report['cleanup_verified'] = False
         try:
             check_cancel()
         except BaseException as error:
@@ -646,6 +888,14 @@ def _validate_snapshot(snapshot):
     for key in _BINDINGS:
         if key not in snapshot:
             raise ValueError('Missing retained ownership binding: ' + key)
+    if 'observation_lock' in snapshot:
+        _observation_binding(snapshot['observation_lock'])
+        coordination = snapshot.get('observation_coordination')
+        if (not isinstance(coordination, dict) or set(coordination) != {'failed'}
+                or type(coordination['failed']) is not bool):
+            raise ValueError('Missing retained observation coordination state')
+    elif 'observation_coordination' in snapshot:
+        raise ValueError('Observation coordination requires its exact lock binding')
     start, end = snapshot['deadline_monotonic'], snapshot['cleanup_deadline_monotonic']
     if (type(start) not in (int, float) or type(end) not in (int, float)
             or not math.isfinite(start) or not math.isfinite(end)
@@ -666,6 +916,9 @@ def _read_saved(path, reference):
     _validate_snapshot(value)
     if any(value[key] != reference[key] for key in _BINDINGS):
         raise RuntimeError('Retained host command bindings changed')
+    if (('observation_lock' in value) != ('observation_lock' in reference)
+            or value.get('observation_lock') != reference.get('observation_lock')):
+        raise RuntimeError('Retained observation lock binding changed')
     if reference.get('owner') is not None and value.get('owner') != reference['owner']:
         raise RuntimeError('Retained supervisor identity changed')
     stored = value
@@ -677,6 +930,12 @@ def _read_saved(path, reference):
     value['errors'] = list(dict.fromkeys([*reference.get('errors', []), *stored.get('errors', [])]))
     for key in ('cancel_requested', 'timed_out'):
         value[key] = bool(reference.get(key) or stored.get(key))
+    if 'observation_lock' in value:
+        value['observation_coordination']['failed'] = bool(
+            reference['observation_coordination']['failed'] or stored['observation_coordination']['failed'])
+        if value['observation_coordination']['failed']:
+            value['cleanup_verified'] = False
+            value['passed'] = False
     retained = dict(reference.get('observed', {}))
     for pid, item in stored.get('observed', {}).items():
         if pid in retained and not _same(item, retained[pid]):
@@ -699,14 +958,27 @@ def _read_saved(path, reference):
     return value
 
 
-def verify_completed(snapshot):
-    """Revalidate exact clean evidence without launching the original command."""
+def verify_completed(snapshot, *, deadline=None):
+    """Revalidate clean evidence; an optional deadline only tightens its wait."""
+    if deadline is not None and (type(deadline) not in (int, float) or not math.isfinite(deadline)):
+        raise ValueError('A finite optional verification deadline is required')
     control = _validate_snapshot(snapshot)
     saved = _read_saved(control / 'receipt.json', snapshot)
     if (control / 'reconciliation.json').exists():
         saved = _read_saved(control / 'reconciliation.json', saved)
     if saved.get('cleanup_verified') is not True or saved.get('phase') != 'complete':
         raise RuntimeError('No verified terminal host cleanup receipt')
+    if 'observation_lock' in saved:
+        # A legitimate outer observer may be finishing its own census. Wait
+        # only within this receipt's still-live original cleanup allowance;
+        # historical checks after expiry remain nonblocking, without a helper.
+        original = saved['cleanup_deadline_monotonic']
+        if deadline is not None:
+            original = min(original, deadline)
+        verification_deadline = original if time.monotonic() < original else None
+        with _observation_fence(saved['observation_lock'], verification_deadline,
+                                status=saved['observation_coordination']):
+            pass
     if saved.get('no_launch') is True:
         if saved.get('owner') is not None or saved.get('launch_authorized'):
             raise RuntimeError('Contradictory no-launch ownership evidence')
@@ -748,7 +1020,7 @@ def reconcile_owned(snapshot, *, deadline, persist=None, cancel=False):
         if path.exists():
             result = _read_saved(path, result)
     if result.get('cleanup_verified') is True:
-        return verify_completed(result)
+        return verify_completed(result, deadline=deadline)
     until = min(deadline, result['cleanup_deadline_monotonic'])
     errors = result.setdefault('errors', [])
     result['passed'] = False
@@ -795,18 +1067,24 @@ def reconcile_owned(snapshot, *, deadline, persist=None, cancel=False):
         signals = result.setdefault('reconciliation_signals', [])
         empty = 0
         while time.monotonic() < until:
-            rows = _observe(until, audit, cleanup_deadline=until)
-            live, members = select_owned(rows, owner, retained)
-            for pid, item in members.items():
-                retained.setdefault(pid, item)
-            if len(retained) > MAX_OBSERVED:
-                raise RuntimeError('Owned process evidence bound exceeded')
-            result['observed'] = {str(pid): item for pid, item in retained.items()}
-            result['owned_remaining'] = {str(pid): item for pid, item in members.items()}
-            group = [pid for pid, item in rows.items()
-                     if item['group'] == owner['pid'] and pid != owner['pid']]
-            result['owner_absent'] = not live
-            result['group_empty'] = not group and not live
+            binding = result.get('observation_lock')
+            with _observation_fence(binding, until, audit,
+                                    status=result.get('observation_coordination')) as observation_deadline:
+                rows = _observe(observation_deadline, audit, cleanup_deadline=until)
+                reader = _observation_identity(observation_deadline) if binding is not None else None
+                live, members = select_owned(rows, owner, retained, identity_reader=reader)
+                for pid, item in members.items():
+                    retained.setdefault(pid, item)
+                if len(retained) > MAX_OBSERVED:
+                    raise RuntimeError('Owned process evidence bound exceeded')
+                result['observed'] = {str(pid): item for pid, item in retained.items()}
+                result['owned_remaining'] = {str(pid): item for pid, item in members.items()}
+                group = [pid for pid, item in rows.items()
+                         if item['group'] == owner['pid'] and pid != owner['pid']]
+                result['owner_absent'] = not live
+                result['group_empty'] = not group and not live
+                if binding is not None:
+                    _observation_time(observation_deadline)
             publish()  # New ownership evidence must be durable before a signal.
             if not live and not members:
                 result['observed_stopped'] = not group
