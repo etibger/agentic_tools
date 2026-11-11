@@ -851,6 +851,28 @@ working directory and module-file context as well as its fixed environment.
 Harmless child-launch tests establish those tested boundaries only; they do not
 prove that the live observer or native runtime has passed.
 
+### Owned-command failure notifications
+
+On a command-phase exception, `owned_host_command.run_owned` records the error
+and attempts an immediate `cleanup_unknown` progress checkpoint before bounded
+cleanup starts. This is a nonterminal notice: `controller_finished` and
+`cleanup_verified` remain false. Normal checkpoint publication atomically saves
+`progress.json` before calling `persist(snapshot)`.
+If that publication fails before the failure-notification callback is attempted,
+one best-effort fallback passes the bounded dirty snapshot and publication error
+to the callback. There is no duplicate fallback for the same already-attempted
+failure-notification callback, including one that raised. Later ordinary cleanup
+and terminal checkpoints still call `persist`; a callback failure in an earlier
+normal phase can itself trigger the dirty notification.
+
+The notice proves neither durable progress publication, cleanup nor termination.
+Original cleanup and deadlines continue even if notification fails. If progress
+and caller-side end-marker publication both fail, a child may retain its prior
+clean view; owned cleanup provides containment, not guaranteed immediate
+revocation. Existing ownership and settlement requirements still apply.
+A completed child's nonzero exit remains for the adapter to classify; it does
+not itself trigger this internal-error notification.
+
 ### Explicit observation coordination for nested owned commands
 
 The maintained `owned_host_command.run_owned` API accepts optional

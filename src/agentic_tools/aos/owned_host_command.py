@@ -570,7 +570,7 @@ def run_owned(argv, cwd, environment, control, *, deadline, cleanup_deadline=Non
     started = time.monotonic()
     last_checkpoint = started
 
-    def checkpoint(phase, *, terminal=False):
+    def checkpoint(phase, *, terminal=False, notification=None):
         nonlocal last_checkpoint
         report['phase'] = phase
         report['launch_authorized'] = launched
@@ -585,9 +585,14 @@ def run_owned(argv, cwd, environment, control, *, deadline, cleanup_deadline=Non
             snapshot['census_count'] = len(census_commands)
             snapshot['census_commands'] = _copy([item for item in census_commands[:-1]
                 if item['errors'] or not item['reaped'] or not item['pipes_eof']] + census_commands[-1:])
+        if notification is not None:
+            notification['snapshot'] = snapshot
         _atomic_json(control / 'progress.json', snapshot)
         if persist is not None:
-            persist(_copy(snapshot))
+            callback_snapshot = _copy(snapshot)
+            if notification is not None:
+                notification['callback_attempted'] = True
+            persist(callback_snapshot)
         last_checkpoint = time.monotonic()
 
     def check_cancel():
@@ -720,6 +725,22 @@ def run_owned(argv, cwd, environment, control, *, deadline, cleanup_deadline=Non
         if isinstance(error, TimeoutError):
             report['timed_out'] = True
         _error(errors, 'command', error)
+        notification = {}
+        try:
+            checkpoint('cleanup_unknown', notification=notification)
+        except BaseException as notification_error:
+            _error(errors, 'failure notification persistence', notification_error)
+            # A failed progress write must not hide the dirty state from the
+            # caller. This is a nonterminal notice, never proof of publication
+            # or cleanup. Do not retry a callback that was already invoked.
+            if (persist is not None and 'snapshot' in notification
+                    and not notification.get('callback_attempted')):
+                try:
+                    snapshot = _copy(notification['snapshot'])
+                    snapshot['errors'] = list(errors)
+                    persist(snapshot)
+                except BaseException as callback_error:
+                    _error(errors, 'failure notification callback', callback_error)
     finally:
         cleaning = True
         if process is not None:

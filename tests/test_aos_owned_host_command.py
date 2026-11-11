@@ -935,3 +935,171 @@ def test_unrelated_reused_group_number_holds_immediately_without_signals(lifecyc
     assert lifecycle.observations == 1 and lifecycle.now == started
     assert not lifecycle.signals and not lifecycle.launches and not lifecycle.waits
     assert not (lifecycle.control / 'release').exists()
+
+
+@pytest.mark.parametrize('publication_fails', [False, True])
+@pytest.mark.parametrize('callback_fails', [False, True])
+def test_command_failure_notification_precedes_cleanup_without_retrying_its_callback(
+        lifecycle, monkeypatch, publication_fails, callback_fails):
+    state = lifecycle
+    state.finish_on_go = False
+    early_calls, early_publications = [], []
+    original_atomic, original_observe = command._atomic_json, command._observe
+    def early(snapshot):
+        return (snapshot.get('phase') == 'cleanup_unknown'
+                and snapshot.get('controller_finished') is False
+                and state.observations == 0)
+    def atomic(path, snapshot):
+        if Path(path).name == 'progress.json' and early(snapshot):
+            early_publications.append(json.loads(json.dumps(snapshot)))
+            if publication_fails:
+                raise OSError('synthetic early progress publication failure')
+        return original_atomic(path, snapshot)
+    def observe(until, audit, **kwargs):
+        state.events.append(('cleanup-census', state.observations))
+        return original_observe(until, audit, **kwargs)
+    def persist(snapshot):
+        if early(snapshot):
+            # Record callback entry even if it raises: an attempted callback
+            # cannot safely be retried merely because it reported failure.
+            early_calls.append(json.loads(json.dumps(snapshot)))
+            state.events.append(('early-failure-notification', len(early_calls)))
+            assert state.payload_live and state.admitted
+            assert not state.signals and not state.waits
+            assert not (state.control / 'release').exists()
+            assert snapshot['passed'] is False and snapshot['cleanup_verified'] is False
+            assert snapshot['controller_finished'] is False and snapshot['owner_reaped'] is False
+            assert snapshot['deadline_monotonic'] == state.deadline
+            assert snapshot['cleanup_deadline_monotonic'] == state.deadline + 26
+            assert any('command: InterruptedError' in error for error in snapshot['errors'])
+            saved = json.loads((state.control / 'progress.json').read_text())
+            if publication_fails:
+                assert saved['phase'] == 'running' and not saved['errors']
+                assert any('synthetic early progress publication failure' in error
+                           for error in snapshot['errors'])
+            else:
+                assert saved == snapshot
+            if callback_fails:
+                raise OSError('synthetic early callback failure')
+        state.persist(snapshot)
+    monkeypatch.setattr(command, '_atomic_json', atomic)
+    monkeypatch.setattr(command, '_observe', observe)
+    report = state.run(persist=persist, cancelled=lambda: state.admitted)
+    assert not any('AssertionError' in error for error in report['errors'])
+    assert len(early_calls) == len(early_publications) == 1
+    notify = state.events.index(('early-failure-notification', 1))
+    census = next(i for i, event in enumerate(state.events) if event[0] == 'cleanup-census')
+    assert notify < census < state.events.index(('signal', PAYLOAD_PID))
+    assert state.signals == [(PAYLOAD_PID, signal.SIGINT)]
+    assert len(state.launches) == 1 and state.events.count(('stdin', b'G')) == 1
+    assert (state.control / 'release').is_file() and state.waits
+    assert report['owner_reaped'] and report['cleanup_verified'] and report['controller_finished']
+    assert report['phase'] == 'complete' and not report['passed']
+    assert report['deadline_monotonic'] == state.deadline
+    assert report['cleanup_deadline_monotonic'] == state.deadline + 26
+    assert all(until <= report['cleanup_deadline_monotonic'] for until in state.census_deadlines)
+    if publication_fails:
+        assert any('synthetic early progress publication failure' in error for error in report['errors'])
+    if callback_fails:
+        assert any('synthetic early callback failure' in error for error in report['errors'])
+    assert json.loads((state.control / 'receipt.json').read_text()) == report
+
+
+def test_before_go_failure_is_notified_before_supervisor_stdin_close_or_reap(lifecycle):
+    state, notices = lifecycle, []
+    def before_go(deadline):
+        raise ValueError('synthetic boundary rejection')
+    def persist(snapshot):
+        if snapshot['phase'] == 'cleanup_unknown' and not snapshot['controller_finished']:
+            notices.append(json.loads(json.dumps(snapshot)))
+            assert not state.process.stdin.closed and state.process.returncode is None
+            assert not state.admitted and not state.waits and not state.census_deadlines
+            assert not state.signals and not (state.control / 'release').exists()
+            assert snapshot['launch_authorized'] is False
+            assert snapshot['cleanup_verified'] is False and snapshot['owner_reaped'] is False
+            assert any('synthetic boundary rejection' in error for error in snapshot['errors'])
+        state.persist(snapshot)
+    report = state.run(before_go=before_go, persist=persist)
+    assert not any('AssertionError' in error for error in report['errors'])
+    assert len(notices) == 1
+    assert state.process.stdin.closed and state.waits and report['owner_reaped']
+    assert not state.admitted and not report['launch_authorized'] and not state.signals
+    assert report['cleanup_verified'] and not report['passed']
+    assert report['deadline_monotonic'] == state.deadline
+    assert report['cleanup_deadline_monotonic'] == state.deadline + 26
+
+
+def test_failure_notice_retains_uncertain_census_before_next_cleanup_observation(lifecycle, monkeypatch):
+    state, notices = lifecycle, []
+    state.finish_on_go = False
+    original_observe = command._observe
+    uncertain = None
+    def observe(until, audit, **kwargs):
+        nonlocal uncertain
+        rows = original_observe(until, audit, **kwargs)
+        if state.observations == 1:
+            audit[-1].update(reaped=False, pipes_eof=False,
+                             errors=['synthetic census reap unavailable'])
+            uncertain = json.loads(json.dumps(audit[-1]))
+            raise RuntimeError('synthetic first census failure')
+        assert notices, 'Failure must be delivered before a second observation can start'
+        return rows
+    def persist(snapshot):
+        if (snapshot['phase'] == 'cleanup_unknown' and not snapshot['controller_finished']
+                and state.observations == 1):
+            notices.append(json.loads(json.dumps(snapshot)))
+            assert not state.signals and not state.waits and not (state.control / 'release').exists()
+            assert snapshot['census_count'] == 1 and snapshot['census_commands'] == [uncertain]
+            assert snapshot['cleanup_verified'] is False and snapshot['owner_reaped'] is False
+            assert any('synthetic first census failure' in error for error in snapshot['errors'])
+        state.persist(snapshot)
+    monkeypatch.setattr(command, '_observe', observe)
+    report = state.run(persist=persist)
+    assert not any('AssertionError' in error for error in report['errors'])
+    assert len(notices) == 1 and state.observations > 1
+    assert state.signals == [(PAYLOAD_PID, signal.SIGINT)] and report['owner_reaped']
+    assert (state.control / 'release').is_file()
+    assert uncertain in report['census_commands']
+    assert report['phase'] == 'cleanup_unknown' and not report['cleanup_verified'] and not report['passed']
+    assert report['controller_finished']
+    assert report['deadline_monotonic'] == state.deadline
+    assert report['cleanup_deadline_monotonic'] == state.deadline + 26
+
+
+def test_failure_notification_cannot_renew_cleanup_budget_it_consumes(lifecycle):
+    state, notices = lifecycle, []
+    state.finish_on_go = False
+    saved_cleanup_deadline = 111.0
+    def persist(snapshot):
+        if snapshot['phase'] == 'cleanup_unknown' and not snapshot['controller_finished']:
+            notices.append(json.loads(json.dumps(snapshot)))
+            assert snapshot['cleanup_deadline_monotonic'] == saved_cleanup_deadline
+            state.now = saved_cleanup_deadline
+        state.persist(snapshot)
+    report = state.run(cleanup_deadline=saved_cleanup_deadline,
+                       cancelled=lambda: state.admitted, persist=persist)
+    assert state.admitted and state.events.count(('stdin', b'G')) == 1
+    assert not any('AssertionError' in error for error in report['errors'])
+    assert len(notices) == 1
+    assert not state.census_deadlines and not state.signals and not state.waits
+    assert not (state.control / 'release').exists()
+    assert state.process.stdin.closed and state.process.stdout.closed and state.process.stderr.closed
+    assert state.process in command._RETAINED_PROCESSES
+    assert report['deadline_monotonic'] == state.deadline
+    assert report['cleanup_deadline_monotonic'] == saved_cleanup_deadline
+    assert report['phase'] == 'cleanup_unknown' and not report['cleanup_verified'] and not report['passed']
+    assert report['controller_finished'] and not report['owner_reaped']
+
+
+def test_expected_nonzero_result_does_not_emit_command_failure_notification(lifecycle):
+    state, notices = lifecycle, []
+    state.command_exit = 17
+    def persist(snapshot):
+        if snapshot['phase'] == 'cleanup_unknown' and not snapshot['controller_finished']:
+            notices.append(snapshot)
+        state.persist(snapshot)
+    report = state.run(persist=persist)
+    assert notices == [] and report['errors'] == []
+    assert report['phase'] == 'complete' and report['child']['exit_code'] == 17
+    assert report['cleanup_verified'] and report['owner_reaped'] and not report['passed']
+    assert len(state.launches) == 1 and state.events.count(('stdin', b'G')) == 1
