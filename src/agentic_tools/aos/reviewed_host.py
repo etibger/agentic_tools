@@ -59,6 +59,7 @@ def _gate(runtime, recipe, descriptor, output, executor, frozen, *, deadline=Non
         raise Rejected('runtime_scope', 'Reviewed checks require an exact real product attempt')
     assignment = attempt.get('assignment', {})
     runtime._require_work(assignment)
+    runtime._coordinator_evidence(assignment, native=True, check=descriptor, output=output)
     if (attempt.get('attempt_id') != aid or assignment.get('attempt_id') != aid
             or assignment.get('kind') != 'assessment' or assignment.get('executor') != executor
             or attempt.get('startup_qualification_only') or attempt.get('startup_outcome')

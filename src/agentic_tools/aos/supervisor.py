@@ -258,8 +258,15 @@ def _drive(store, lifecycle, worker, packet, service, runtime_factory, interval,
             else:
                 if not run['admitted']:
                     record = store.read(work_id)
-                    lifecycle.admit(_operation(work_id, target, 'admit'), work_id,
-                                    expected_work_revision=record['revision'], expected_digest=target)
+                    if packet.get('assessment_review_continuation'):
+                        from .assessment_review_continuation import admit
+                        admit(lifecycle, packet)
+                    elif packet.get('assessment_continuation'):
+                        from .assessment_continuation import admit
+                        admit(lifecycle, packet)
+                    else:
+                        lifecycle.admit(_operation(work_id, target, 'admit'), work_id,
+                                        expected_work_revision=record['revision'], expected_digest=target)
                     fault('after_admission')
                     record = store.read(work_id)
                     if record['lifecycle']['technical_blockers'] or record['execution'] == 'paused':
@@ -303,7 +310,7 @@ def _directories(project_path: Path, request_path: Path, bindings: dict, *, stat
             raise Rejected(blocker['code'], blocker['detail'])
 
 
-def start(project_path: Path, request_path: Path, *, prepare=None, runtime_factory=None,
+def start(project_path: Path, request_path: Path, *, continuation_path: Path | None = None, prepare=None, runtime_factory=None,
           service_factory=None, interval: float = .25, stop_event=None, emit=None, fault=None) -> dict:
     """Own one exact feature until delivery or an actionable stop.
 
@@ -352,7 +359,13 @@ def start(project_path: Path, request_path: Path, *, prepare=None, runtime_facto
                'runtime_closed': True, 'decision_service': {'listener_stopped': True, 'requests_stopped': True}}
     with Worker(lifecycle, work_id=work_id, reconcile_on_enter=False) as worker:
         try:
-            packet = _retained(retained_path, bindings, config, request)
+            if continuation_path is not None:
+                from .assessment_continuation import _file, load
+                if _file(Path(continuation_path))[0].get('assessment_review_continuation'):
+                    from .assessment_review_continuation import load
+                packet = load(Path(continuation_path), bindings, config, request)
+            else:
+                packet = _retained(retained_path, bindings, config, request)
             if packet is None:
                 if _read(store, work_id) is not None:
                     raise Rejected('supervisor_unbound', 'Existing work has no retained preparation from this start command')
@@ -368,7 +381,14 @@ def start(project_path: Path, request_path: Path, *, prepare=None, runtime_facto
             # A retained run must not recreate missing output/evidence roots.
             for root in roots:
                 project.native_paths._canonical(str(root), directory=True)
-            target = _bootstrap(store, lifecycle, packet, fault)
+            if packet.get('assessment_review_continuation'):
+                from .assessment_review_continuation import publish
+                target = publish(lifecycle, packet)
+            elif packet.get('assessment_continuation'):
+                from .assessment_continuation import publish
+                target = publish(lifecycle, packet)
+            else:
+                target = _bootstrap(store, lifecycle, packet, fault)
             # Do not materialize a pre-challenge projection. begin_approval adds
             # the pending challenge without advancing the work revision, so that
             # earlier view would immediately be stale at the same revision.

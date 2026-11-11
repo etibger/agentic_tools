@@ -35,6 +35,8 @@ def case(tmp_path, monkeypatch, request):
     lifecycle = SimpleNamespace(store=SimpleNamespace(directory=state),
                                 assignment_authority_errors=lambda assignment: list(errors))
     runtime = CodexRuntime(lifecycle, {'WORK': base}, work_id='WORK')
+    # This existing fixture selects no coordinator evidence gate.
+    monkeypatch.setattr(runtime, '_coordinator_evidence', lambda assignment, **kwargs: None)
     monkeypatch.setattr(runtime, '_bindings', lambda assignment, recipe: copy.deepcopy(adapters))
     monkeypatch.setattr(host.checkout_boundary, 'scoped_outputs',
                         lambda recipe, output: {**recipe, 'outputs': str(output)})

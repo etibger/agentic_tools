@@ -404,7 +404,7 @@ class Lifecycle:
         for field in exact:
             if field not in bounds or contract.get(field) != bounds[field]:
                 errors.append('Execution contract differs from approved ' + field)
-        for field in ('execution_policy', 'runtime_recipe', 'check_kinds', 'check_adapters', 'product_budget', 'adapter_architecture'):
+        for field in ('execution_policy', 'runtime_recipe', 'check_kinds', 'check_adapters', 'product_budget', 'adapter_architecture', 'assessment_evidence_gate', 'predispatch_feature_amendment'):
             if field in bounds or field in contract:
                 if contract.get(field) != bounds.get(field):
                     errors.append('Execution contract differs from approved ' + field)
@@ -608,17 +608,35 @@ class Lifecycle:
             if assignment['kind'] != 'assessment' and any(r['state'] == 'frozen' for r in db.execute('SELECT state FROM resource WHERE work_id=?', (assignment['work_id'],))):
                 self._block(db, assignment['work_id'], 'candidate_frozen', 'Writer cannot mutate a frozen assessment candidate')
                 return None
+            release = None
+            if assignment['kind'] == 'assessment' and ('assessment_evidence_gate' in contract or 'predispatch_feature_amendment' in contract):
+                from . import assessment_evidence
+                try:
+                    proof = assessment_evidence.verify_in(self, db, assignment)
+                    release = {'reference': proof['reference'], 'mode': proof['mode']}
+                except (Rejected, OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError):
+                    # Ineligibility is not an uncertain launch. Keep the real
+                    # proposed assignment and its unstarted clock unchanged.
+                    return None
             timestamp = now()
             db.execute("UPDATE assignment SET state='sent',sent_at=? WHERE assignment_id=?", (timestamp, assignment_id))
             db.execute("UPDATE outbox SET state='sending',epoch=?,updated_at=? WHERE assignment_id=?", (epoch, timestamp, assignment_id))
             db.execute("UPDATE resource SET assignment_id=?,state=?,observed_at=? WHERE work_id=?",
                        (assignment_id, 'frozen' if assignment['kind'] == 'assessment' else 'owned', timestamp, assignment['work_id']))
             db.execute("UPDATE lifecycle SET execution='active' WHERE work_id=?", (assignment['work_id'],))
-            self._touch(db, assignment['work_id'], 'launch_intent', {'assignment_id': assignment_id, 'epoch': epoch})
+            detail = {'assignment_id': assignment_id, 'epoch': epoch}
+            if release is not None:
+                detail['assessment_evidence'] = release
+            self._touch(db, assignment['work_id'], 'launch_intent', detail)
             return dict(db.execute('SELECT * FROM assignment WHERE assignment_id=?', (assignment_id,)).fetchone())
 
     def can_launch_saved(self, assignment: dict) -> bool:
         """A durable intent is not permission to launch through a later fence."""
+        from . import assessment_evidence
+        try:
+            assessment_evidence.verify_launch_intent(self, assignment)
+        except (Rejected, OSError, ValueError, KeyError, TypeError, AttributeError, RuntimeError):
+            return False
         authority_errors = self.assignment_authority_errors(assignment)
         with self.store._transaction() as db:
             run, _ = self._run(db, assignment['work_id'])
@@ -781,6 +799,10 @@ class Lifecycle:
         return self._assessment_lineage_in(db, assignment, contract, run['cycle'])
 
     def _assessment_lineage_in(self, db: sqlite3.Connection, assignment: sqlite3.Row, contract: dict, cycle: int) -> dict:
+        from .assessment_continuation import assessment_context
+        continued = assessment_context(db, assignment, contract)
+        if continued is not None:
+            return continued
         # This private derivation is also used after an exact accepted triage has
         # authorized its current repair; it grants no fresh assessment authority.
         current = dict(assignment)
@@ -923,6 +945,8 @@ class Lifecycle:
         error, action = None, None
         unknown = not stopped_with_effects(result)
         try:
+            from . import assessment_evidence
+            coordinator_error = assessment_evidence.completion_error(self, db, a, result)
             context = self._assessment_context_in(db, a)
             marker = result.get('reviewed_host_validation', {})
             reports = result.get('initial_reports', {})
@@ -932,6 +956,8 @@ class Lifecycle:
             limits = result.get('resource_limits')
             if unknown:
                 error = 'Reviewed host assessment does not prove stopped ownership and known effects'
+            elif coordinator_error:
+                error = coordinator_error
             elif (self._admission_errors(db, work_id) or self._assignment_authority_errors_in(db, dict(a))
                     or db.execute("SELECT 1 FROM owned_stop WHERE work_id=? AND state<>'stopped'", (work_id,)).fetchone()
                     or stop_conflicts_in(db, work_id)):
@@ -1024,8 +1050,10 @@ class Lifecycle:
         self._deliver_in(db, contract, a, result)
         return 'delivered'
 
-    @staticmethod
-    def _deliver_in(db: sqlite3.Connection, contract: dict, a: sqlite3.Row, result: dict) -> None:
+    def _deliver_in(self, db: sqlite3.Connection, contract: dict, a: sqlite3.Row, result: dict) -> None:
+        from . import assessment_evidence
+        if error := assessment_evidence.completion_error(self, db, a, result):
+            raise Rejected('assessment_evidence', error)
         delivery = {'candidate': result['candidate'], 'accepted': True, 'committed': False, 'installed': False,
                     'released': False, 'receiving_owner': contract['receiving_owner'], 'checks': result['checks'],
                     'limits': 'Q2 bounded runtime candidate; desktop/archive qualification remains separate' if result.get('runtime_turn_id') else 'Q1 simulated acceptance only',

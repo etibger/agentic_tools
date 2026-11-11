@@ -32,6 +32,8 @@ def main(argv: list[str] | None = None) -> int:
         project_command = commands.add_parser(name, help=help_text)
         project_command.add_argument('--project', type=Path, required=True, help='Maintained strict project configuration')
         project_command.add_argument('--request', type=Path, required=True, help='Existing introduction and concept request')
+        if name == 'start':
+            project_command.add_argument('--continuation', type=Path, help='Exact immutable recovered-assessment preparation; requires its own saved decision')
     backlog_preview = commands.add_parser('backlog-preview', help='Preview one mapped backlog row against its existing GitHub issue/project; no target writes')
     backlog_preview.add_argument('--markdown', type=Path, required=True)
     backlog_preview.add_argument('--item', required=True)
@@ -50,7 +52,10 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument('--fake-destination', type=Path, required=True)
     for name in ("serve", "serve-coordinator", "status", "archive-preview", "archive-prepare-local", "prepare-decision", "decide-serve", "worker", "backup-ledger", "recover-startup-approval",
                  "introduce-work", "present-concept", "register-contract", "admit", "pause", "resume", "cancel",
-                 "dashboard-serve", "dashboard-inspect", "dashboard-stop", "reconcile-prerequisites", "restore-ledger", "recover-legacy-cancellation", "recover-startup-failure", "continue-recovered-startup"):
+                 "dashboard-serve", "dashboard-inspect", "dashboard-stop", "reconcile-prerequisites", "restore-ledger", "recover-legacy-cancellation", "recover-startup-failure", "continue-recovered-startup", "recover-assessment-startup", "prepare-assessment-continuation",
+                 "prepare-source-review-evidence", "prepare-assessment-review-continuation",
+                 "prepare-predispatch-settings-rebind", "apply-predispatch-settings-rebind", "verify-predispatch-settings-rebind",
+                 "prepare-predispatch-feature-amendment", "apply-predispatch-feature-amendment", "verify-predispatch-feature-amendment"):
         command = commands.add_parser(name)
         command.add_argument("--state-dir", type=Path, required=True, help="Private authoritative directory outside all worker-writable roots")
         command.add_argument("--worker-writable-root", type=Path, action="append", required=True, help="Declare each worker-writable root; actual runtime denial still needs verification")
@@ -59,7 +64,25 @@ def main(argv: list[str] | None = None) -> int:
                 command.add_argument("--work", action="append", required=True, help="Explicit allowed view: kebab-case-alias=WORK_ID; repeat for multiple works")
                 command.add_argument("--port", type=int, required=True, help="Loopback HTTP port; 0 requests an unused disposable port")
                 command.add_argument("--archive-journal", type=Path, help="Optional explicit local history journal; read-only and never served as a file")
-        elif name in ("recover-legacy-cancellation", "recover-startup-failure", "continue-recovered-startup"):
+        elif name in ('prepare-predispatch-settings-rebind', 'apply-predispatch-settings-rebind', 'verify-predispatch-settings-rebind',
+                      'prepare-predispatch-feature-amendment', 'apply-predispatch-feature-amendment', 'verify-predispatch-feature-amendment'):
+            command.add_argument('--request', type=Path, required=True, help='Exact protected settings-refresh request; never supplies approval or resets accounting')
+        elif name == 'prepare-source-review-evidence':
+            command.add_argument('--work-id', required=True)
+            command.add_argument('--git-base', required=True)
+            command.add_argument('--destination', type=Path, required=True)
+        elif name == 'prepare-assessment-review-continuation':
+            command.add_argument('--operation-id', required=True)
+            command.add_argument('--work-id', required=True)
+            command.add_argument('--failed-assignment-id', required=True)
+            command.add_argument('--source-review-evidence', type=Path, required=True)
+            command.add_argument('--readiness-extra-attempt', action='store_true', help='Retain prior technical checks and explicitly allow one additional metadata-only attempt')
+        elif name == 'prepare-assessment-continuation':
+            command.add_argument('--operation-id', required=True)
+            command.add_argument('--recovery-operation-id', required=True)
+            command.add_argument('--support-file', type=Path, action='append', default=[])
+            command.add_argument('--readiness-extra-attempt', action='store_true', help='Retain prior technical checks and explicitly allow one additional metadata-only attempt')
+        elif name in ("recover-legacy-cancellation", "recover-startup-failure", "continue-recovered-startup", "recover-assessment-startup"):
             command.add_argument("--request", type=Path, required=True, help="Exact protected current-state recovery packet; never an approval answer")
             command.add_argument("--apply", action="store_true", help="Apply the exact recovery; default only previews")
         elif name in ("introduce-work", "present-concept", "reconcile-prerequisites"):
@@ -118,7 +141,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == 'start':
             from .supervisor import start
-            result = start(args.project, args.request)
+            options = {'continuation_path': args.continuation} if args.continuation is not None else {}
+            result = start(args.project, args.request, **options)
             print(json.dumps(result, indent=2), flush=True)
             return 0 if result.get('state') in {'delivered', 'declined', 'cancelled'} else 3
         if args.command == 'prepare-project':
@@ -164,6 +188,87 @@ def main(argv: list[str] | None = None) -> int:
             result = inspect_service(store) if args.command == "dashboard-inspect" else stop_service(store)
             print(json.dumps(result, indent=2))
             return 3 if result.get("state") == "unavailable" else 0
+        if args.command == 'prepare-source-review-evidence':
+            from .source_review_evidence import prepare
+            from .lifecycle import Lifecycle
+            store = Store(args.state_dir, tuple(args.worker_writable_root), read_only=True)
+            result = prepare(Lifecycle.for_reading(store), work_id=args.work_id,
+                             destination=args.destination, git_base=args.git_base)
+            print(json.dumps(result, indent=2))
+            return 0
+        if args.command == 'prepare-assessment-review-continuation':
+            from .assessment_review_continuation import prepare
+            from .assessment_continuation import _file
+            from .lifecycle import Lifecycle
+            from .project import _private, _unique, _nonfinite
+            from .native_paths import _canonical
+            from .supervisor import _retain
+            evidence_path = _canonical(str(args.source_review_evidence.absolute()), regular_file=True)
+            _private(evidence_path, file=True)
+            if evidence_path.stat().st_size > 16384:
+                raise Rejected('source_review_evidence', 'Evidence descriptor exceeds its size bound')
+            evidence = json.loads(evidence_path.read_bytes(), object_pairs_hook=_unique, parse_constant=_nonfinite)
+            store = Store(args.state_dir, tuple(args.worker_writable_root))
+            extra = {'readiness_extra_attempt': True} if args.readiness_extra_attempt else {}
+            packet = prepare(Lifecycle(store), operation_id=args.operation_id, work_id=args.work_id,
+                             failed_assignment_id=args.failed_assignment_id, source_review_evidence=evidence, **extra)
+            path = store.directory / ('prepared-assessment-review-' + args.work_id + '-' + args.operation_id + '.json')
+            if path.exists():
+                if _file(path)[0] != packet:
+                    raise Rejected('assessment_review_continuation', 'Existing continuation packet differs')
+            else:
+                _retain(path, packet)
+            print(json.dumps({'ready': True, 'continuation': str(path),
+                              'work_id': args.work_id, 'approval_recorded': False}, indent=2))
+            return 0
+        if args.command in ('prepare-predispatch-settings-rebind', 'apply-predispatch-settings-rebind', 'verify-predispatch-settings-rebind',
+                      'prepare-predispatch-feature-amendment', 'apply-predispatch-feature-amendment', 'verify-predispatch-feature-amendment'):
+            if args.command.endswith('feature-amendment'):
+                from . import predispatch_feature_amendment as rebind
+            else:
+                from . import predispatch_settings_rebind as rebind
+            from .coordinator import request_file
+            from .lifecycle import Lifecycle
+            schemas = {prefix + '-predispatch-' + suffix: schema for suffix in ('settings-rebind', 'feature-amendment')
+                       for prefix, schema in (('prepare', rebind.PrepareRequest), ('apply', rebind.ApplyRequest), ('verify', rebind.VerifyRequest))}
+            request = request_file(args.request, schemas[args.command])
+            store = Store(args.state_dir, tuple(args.worker_writable_root), read_only=True)
+            if args.command.startswith('verify-predispatch-'):
+                result = rebind.verify(store, request)
+            else:
+                lifecycle = Lifecycle.for_reading(store)
+                result = (rebind.prepare(lifecycle, request) if args.command.startswith('prepare-')
+                          else rebind.apply(lifecycle, request))
+            print(json.dumps(result, indent=2))
+            return 0
+        if args.command == 'prepare-assessment-continuation':
+            from .assessment_continuation import prepare, _file
+            from .lifecycle import Lifecycle
+            from .supervisor import _retain
+            store = Store(args.state_dir, tuple(args.worker_writable_root))
+            extra = {'readiness_extra_attempt': True} if args.readiness_extra_attempt else {}
+            packet = prepare(Lifecycle(store), operation_id=args.operation_id,
+                             recovery_operation_id=args.recovery_operation_id,
+                             support_files=[str(path) for path in args.support_file], **extra)
+            work_id = packet['introduction']['work_id']
+            path = store.directory / ('prepared-assessment-' + work_id + '-' + args.operation_id + '.json')
+            if path.exists():
+                if _file(path)[0] != packet:
+                    raise Rejected('assessment_continuation', 'Existing continuation packet differs')
+            else:
+                _retain(path, packet)
+            print(json.dumps({'ready': True, 'continuation': str(path),
+                              'work_id': work_id, 'approval_recorded': False}, indent=2))
+            return 0
+        if args.command == 'recover-assessment-startup':
+            from .coordinator import request_file
+            from .assessment_recovery import AssessmentRecoveryRequest, recover
+            from .lifecycle import Lifecycle
+            request = request_file(args.request, AssessmentRecoveryRequest)
+            store = Store(args.state_dir, tuple(args.worker_writable_root), read_only=not args.apply)
+            lifecycle = Lifecycle(store) if args.apply else Lifecycle.for_reading(store)
+            print(json.dumps(recover(lifecycle, request, apply=args.apply), indent=2))
+            return 0
         if args.command == "continue-recovered-startup":
             from .coordinator import request_file
             from .startup_resource_continuation import StartupResourceContinuationRequest, acknowledge

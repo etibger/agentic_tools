@@ -172,3 +172,90 @@ def test_start_uses_existing_cli_error_handling_without_setup(start_command, cap
     output = capsys.readouterr()
     assert output.out == '' and json.loads(output.err)['error'] == 'supervisor_owned'
     assert len(p.start_calls) == 1 and p.calls == [] and list(p.state.iterdir()) == []
+
+
+def test_assessment_continuation_cli_preserves_exact_support_file_paths(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+    from agentic_tools.aos import assessment_continuation, lifecycle, supervisor
+    state = tmp_path / 'state'
+    support = tmp_path / 'policy.json'
+    selected = SimpleNamespace(directory=state)
+    monkeypatch.setattr(cli, 'Store', lambda *args, **kwargs: selected)
+    monkeypatch.setattr(lifecycle, 'Lifecycle', lambda store: store)
+    prepared = {'introduction': {'work_id': 'FIXTURE'}}
+    calls = []
+    def prepare(context, **options):
+        assert context is selected
+        assert options == {'operation_id': 'continue-fixture', 'recovery_operation_id': 'recover-fixture',
+                           'support_files': [str(support)]}
+        calls.append(options)
+        return prepared
+    monkeypatch.setattr(assessment_continuation, 'prepare', prepare)
+    retained = []
+    monkeypatch.setattr(supervisor, '_retain', lambda path, packet: retained.append((path, packet)))
+    assert cli.main(['prepare-assessment-continuation', '--state-dir', str(state),
+                     '--worker-writable-root', str(tmp_path / 'source'),
+                     '--operation-id', 'continue-fixture', '--recovery-operation-id', 'recover-fixture',
+                     '--support-file', str(support)]) == 0
+    result = json.loads(capsys.readouterr().out)
+    expected = state / 'prepared-assessment-FIXTURE-continue-fixture.json'
+    assert result == {'ready': True, 'continuation': str(expected), 'work_id': 'FIXTURE',
+                      'approval_recorded': False}
+    assert len(calls) == 1 and retained == [(expected, prepared)]
+
+
+def test_source_review_evidence_cli_forwards_exact_read_only_inputs(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+    from agentic_tools.aos import source_review_evidence, lifecycle
+    selected = SimpleNamespace(directory=tmp_path / 'state')
+    stores, calls = [], []
+    def store(*args, **kwargs):
+        stores.append((args, kwargs))
+        return selected
+    monkeypatch.setattr(cli, 'Store', store)
+    monkeypatch.setattr(lifecycle.Lifecycle, 'for_reading', lambda context: context)
+    descriptor = {'format': 'fixture-descriptor'}
+    def prepare(context, **options):
+        assert context is selected
+        calls.append(options)
+        return descriptor
+    monkeypatch.setattr(source_review_evidence, 'prepare', prepare)
+    destination = tmp_path / 'retained-review.json'
+    assert cli.main(['prepare-source-review-evidence', '--state-dir', str(selected.directory),
+                     '--worker-writable-root', str(tmp_path / 'source'), '--work-id', 'FIXTURE',
+                     '--git-base', 'a' * 40, '--destination', str(destination)]) == 0
+    assert json.loads(capsys.readouterr().out) == descriptor
+    assert stores[0][1] == {'read_only': True}
+    assert calls == [{'work_id': 'FIXTURE', 'destination': destination, 'git_base': 'a' * 40}]
+
+
+def test_assessment_review_continuation_cli_retains_bound_descriptor(tmp_path, monkeypatch, capsys):
+    from types import SimpleNamespace
+    from agentic_tools.aos import assessment_review_continuation, lifecycle, supervisor
+    state = tmp_path / 'state'
+    descriptor = {'format': 'fixture-descriptor', 'candidate_identity': 'frozen-candidate'}
+    evidence = tmp_path / 'descriptor.json'
+    evidence.write_text(json.dumps(descriptor))
+    evidence.chmod(0o400)
+    selected = SimpleNamespace(directory=state)
+    monkeypatch.setattr(cli, 'Store', lambda *args, **kwargs: selected)
+    monkeypatch.setattr(lifecycle, 'Lifecycle', lambda context: context)
+    prepared = {'introduction': {'work_id': 'FIXTURE'}}
+    calls, retained = [], []
+    def prepare(context, **options):
+        assert context is selected
+        calls.append(options)
+        return prepared
+    monkeypatch.setattr(assessment_review_continuation, 'prepare', prepare)
+    monkeypatch.setattr(supervisor, '_retain', lambda path, packet: retained.append((path, packet)))
+    assert cli.main(['prepare-assessment-review-continuation', '--state-dir', str(state),
+                     '--worker-writable-root', str(tmp_path / 'source'), '--operation-id', 'review-fixture',
+                     '--work-id', 'FIXTURE', '--failed-assignment-id', 'failed-fixture',
+                     '--source-review-evidence', str(evidence), '--readiness-extra-attempt']) == 0
+    expected = state / 'prepared-assessment-review-FIXTURE-review-fixture.json'
+    assert calls == [{'operation_id': 'review-fixture', 'work_id': 'FIXTURE',
+                      'failed_assignment_id': 'failed-fixture', 'source_review_evidence': descriptor,
+                      'readiness_extra_attempt': True}]
+    assert retained == [(expected, prepared)]
+    assert json.loads(capsys.readouterr().out) == {'ready': True, 'continuation': str(expected),
+                                                'work_id': 'FIXTURE', 'approval_recorded': False}

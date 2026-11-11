@@ -29,7 +29,8 @@ FORMAT = 'aos-prepared-project-v1'
 _RECIPE_KEYS = {'execution_policy', 'source', 'outputs', 'read_roots', 'checks', 'max_seconds',
                 'requires_detached_processes', 'implementation_prompt', 'assessment_prompt',
                 'instruction_manifest', 'checkout_policy', 'probe_interpreter',
-                'native_write_roots', 'native_protected_paths', 'native_process_ownership'}
+                'native_write_roots', 'native_protected_paths', 'native_process_ownership',
+                'source_review_evidence'}
 _ENVELOPE_KEYS = set(ExecutionEnvelope.model_fields) | {
     'execution_policy', 'runtime_recipe', 'runtime_recipe_digest', 'check_adapters',
     'check_kinds', 'adapter_architecture', 'product_budget', 'change_roots'}

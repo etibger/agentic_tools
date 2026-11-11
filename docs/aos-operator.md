@@ -41,6 +41,15 @@ The existing constrained native route keeps **2 + 2R + S assignments**. The star
 
 `native_local_tests` is a separate optional constrained-network policy. It cannot be combined with `reviewed-host-v1`, is not the approved reviewed-host route, and has not qualified the Herdr full suite. A constrained-policy failure never selects host execution automatically. The reviewed-host route has passed local host qualification and the G2/G3 static-review correction rehearsal; live restart and native-failure triage are not claimed by that rehearsal. Keep automated checks separate from any required human acceptance. Commit, push, installation and publication require their actual authorization.
 
+A post-implementation assessment rejected by instruction drift before runtime admission has a separate recovery route. `recover-assessment-startup --request /absolute/recovery.json` previews the exact supported producer, durable failure, original preparation, source candidate, owner exit and independently reviewed evidence; `--apply` records a finding explicitly derived after failure. It preserves the original approval, failed assignment, allocated slot and charges, and leaves work held. Missing runtime rows alone cannot justify recovery.
+
+`prepare-assessment-continuation --operation-id <id> --recovery-operation-id <recovery-id>` uses the same explicit state directory and worker roots. Optional repeated `--support-file /absolute/policy-file` arguments declare exact read-only policy support. Preparation retains a new immutable packet, refreshes bounded metadata readiness against the preserved candidate, and does not grant execution. If the original technical allowance is exhausted, explicit `--readiness-extra-attempt` retains its journal and completed receipts and permits one additional metadata-only check at the same time ceiling. The continuation decision records that technical allowance change; product limits and reservations remain unchanged. Run the original `aos start --project … --request …` command with `--continuation /absolute/returned-packet.json` to present the new technical decision and continue after its saved approval. The successor requires exactly one remaining startup retry and enough lifecycle and runtime capacity for reassessment and all remaining permitted corrections. It consumes that retry and must pass independent review before native checks. Feature behavior, original baseline, check commands, write/network permissions and product limits remain bound; the original preparation is never overwritten. A changed candidate, conflicting ownership, incomplete evidence or insufficient remaining capacity keeps the work held.
+
+
+A source review blocked solely by unavailable Git baseline data has a separate, final-assessment continuation. This narrow route requires the retained prior approved assessment-startup continuation, exactly one lifecycle assignment remaining, and fully consumed correction and startup-retry allowances. First run `prepare-source-review-evidence --work-id <work> --git-base <exact-commit> --destination /absolute/protected-evidence.json` with the existing state directory and worker roots. The coordinator verifies the committed baseline against the original writer inventory and binds the complete changed-path evidence, including new files, to the current frozen candidate. Retain the returned descriptor JSON in a private coordinator file. The runtime stages the verified evidence in the next assessor's own output directory before startup capture, supplies its path and hash as review data, and rechecks it before accepting the review or running host checks. UTF-8 patch data remains inline; other patch bytes use an explicit base64 record with a SHA-256 checksum. No broader Git access is granted.
+
+Then use `prepare-assessment-review-continuation --operation-id <id> --work-id <work> --failed-assignment-id <attempt> --source-review-evidence /absolute/descriptor.json`. This route requires the exact blocked report, known cleanup, unchanged frozen candidate and remaining capacity for one assessment. An explicit `--readiness-extra-attempt` can append one metadata-only allowance to the retained technical journal and prior extension chain; it does not refund product attempts or reset limits. The returned packet binds the evidence and updated runtime identity to a new human technical decision through the same `start --continuation` route. The original feature scope, baseline, checks, permissions, failed reviews and charges remain intact. Only that saved decision queues the final reassessment. A technical review-access failure is never presented as a code defect or passing review.
+
 ## Earlier qualified boundary
 
 AOS component **0.2.4**, checked code `ce99e5d`, has independent acceptance for the supported tool handoff: 441 code checks, a real two-agent Rust trial with separate build and three passing tests, automatic handoff, cleanup, bounded replay, preserved original budgets/decisions and local dashboard/HTTPS adoption. The receiving Herdr chat verified the same version and approved/delivered work through CLI and HTTP. Earlier `d527ea5` Python workflow and awake idle-worker desktop-restart evidence retains its exact scope. Product commands, toolchain access and acceptance limits belong to the owning project. Herdr’s earlier v0.3 requirements approval is retained; its historical failed execution was retired through supported local recovery with the charged reservation preserved. New product execution requires its exact qualified recipe, resource permissions, native UI/sensor/performance checks and separately approved allowance. No app reload is needed for fresh CLI calls.
@@ -114,6 +123,12 @@ Run the coordinator from an already authorized chat or administrator context. Th
 | `prepare-decision` | Prepare the existing HTTPS request; an identical retry reads the same current challenge or verified saved decision. It never supplies an answer. |
 | `admit` | Re-read and verify the saved approval and contract, check prerequisites/ownership, then enqueue eligible work or record a hold. It does not start a model itself. |
 | `reconcile-prerequisites --request FILE` | Record evidence for existing named technical prerequisites before first admission, retaining the exact approved package. |
+| `prepare-predispatch-settings-rebind --request FILE` | Prepare a narrow configuration-hash refresh before any product attempt, retaining the original clock, allowance and metadata-readiness journal. |
+| `apply-predispatch-settings-rebind --request FILE` | After the exact new saved technical approval, replace only the prepared registered contract; remains held and unadmitted. |
+| `verify-predispatch-settings-rebind --request FILE` | Read the immutable applied receipt and verify original accounting continuity after normal execution progresses. |
+| `prepare-predispatch-feature-amendment --request FILE` | Prepare the exact selected pre-dispatch feature/finite-allowance amendment using the original readiness journal, without execution. |
+| `apply-predispatch-feature-amendment --request FILE` | After its distinct exact saved approval, compare-and-swap the held contract; preserve original accounting and no admission. |
+| `verify-predispatch-feature-amendment --request FILE` | Verify saved amendment authority, unchanged physical clock and every retained original/later operation receipt. |
 | `status WORK_ID` | Read the durable work record. `--surface service` and `--surface dashboard` project the same authoritative records. |
 | `pause`, `resume`, `cancel` | Delegate to existing lifecycle control and owned-effect reconciliation. |
 | `worker` | Run the existing worker with an explicit cycle cap and either `--fake-plan` or the separately approved `--runtime-recipes`. |
@@ -437,6 +452,12 @@ Create `concept.json` alongside it:
 
 The request schemas reject extra top-level fields, duplicate JSON keys, invalid types and embedded approval answers. Adapter-specific fields inside `execution_envelope` are retained, including recipe digest and shared budget; the existing adapter still checks them before a real launch. Feature-change envelopes also require compatibility checks. Registration rejects incomplete envelopes and existing contracts; it does not implement replanning an existing contract.
 
+The separate pre-dispatch settings refresh applies only to an untouched, held feature with no admission, lifecycle or runtime attempt, resource ownership, or unresolved native work. Preparation keeps the registered contract unchanged. It refreshes only the hashes and byte counts of already-declared configuration files; instruction discovery, paths, aliases, policy content, source, roles, model/effort, permissions, check commands and product limits stay fixed. The declared RnF controller may update its pinned implementation and add an explicit original-accounting origin; every original pinned input remains retained. Preparation consumes one remaining metadata-only readiness attempt in the original journal (at most three attempts, at most 600 seconds each), using the ordinary defaults and no project checks. It cannot extend or recreate that journal.
+
+Foreign history remains untouched. The guard recognizes a prior maintained legacy retirement only through its exact saved operation, independent evidence, original runtime and retained charges, together with the current retired state and absence of ownership or later conflicts. Its historical stop remains unknown. Ordinary saved cancellation requires matching positive runtime, owned-stop and reconciliation-event receipts. Neither case is inferred merely from missing processes or admission flags.
+
+Prepare from an existing private destination using a `PrepareRequest` JSON object with `operation_id`, `work_id`, `expected_work_revision`, `digest`, `decision_id`, `original_controller_contract_path`, `controller_contract_path`, `original_readiness_receipt_path`, `readiness_directory` and `destination_directory`. The result contains the immutable packet and exact concept request. Present that concept through `present-concept`, then use `prepare-decision` and the normal HTTPS decision page. Do not call `register-contract` for this refresh. Only after the exact saved approval may `apply-predispatch-settings-rebind` receive its `ApplyRequest`: `operation_id`, `work_id`, current `expected_work_revision`, new concept `digest`, saved `decision_id`, `packet_path` and `packet_sha256`. Apply atomically retains an immutable receipt, preserves the original product allowance and settled coordinator clock, and changes no admission or assignment. Continue through ordinary prerequisite reconciliation and admission. Identical application retries return the original receipt; conflicting retries remain held. Existing operations must settle before preparing or presenting the new concept. The original deadline and charged reservations never restart.
+
 ```sh
 uv run aos introduce-work --state-dir "$aos_demo/state" --worker-writable-root "$aos_demo/fixture" --request "$aos_demo/introduction.json"
 uv run aos present-concept --state-dir "$aos_demo/state" --worker-writable-root "$aos_demo/fixture" --request "$aos_demo/concept.json"
@@ -513,3 +534,66 @@ uv run mkdocs build --strict
 ```
 
 The command tests cover disposable HTTPS preparation/answer readback, both workflow types, idempotent retries, automatic assessment handoff, pause/resume across worker processes, owned cancellation, stale/wrong identity and malformed requests. Recovery checks include preexisting projection compatibility, guarded prerequisite evidence, exact backup/restore identities, dispatch fences and interrupted restore persistence. Local history checks retain failed writes, interruptions, retries and conflicts while comparing CLI/HTTP source identities. Their synthetic HTTPS answers are isolated test evidence. Real receiving-chat connection, desktop closure/reopen, adoption and independent acceptance remain separate delivery gates.
+
+
+### Exact pre-dispatch feature amendment
+
+The separate feature-amendment operation is an explicitly bounded capability,
+not a general replan. Preparation requires the original authoritative ledger,
+zero assignments, zero runtime/native evidence for the feature, no materialized
+product budget or product/source scope, no unresolved owners, the original
+settled clock, and the unchanged source baseline. It uses the existing readiness
+journal and only its next remaining metadata-only attempt; it does not dispatch
+model turns or native product checks. Its request adds `recipe_path` and
+`concept_update_path` to the settings-rebind preparation fields. The resulting
+exact concept must receive a distinct normal saved human decision before apply.
+Apply changes only the reviewed held contract and retains an immutable receipt;
+it never admits, launches, initializes a new clock, or refunds prior charges.
+
+This selected contract preserves the 144000-second product total with five
+28800-second jobs, one correction and zero startup retries. The original
+21600-second physical coordinator clock and original approval/deadline remain
+unchanged. An immutable approved extension permits at most 72000 lifetime
+seconds against the exact 69900-second named reservation plan. Every future
+operation starts after amendment application and has a unique named slot,
+actual context, authority receipt, start and completion; all reservations charge
+fully without refunds. Authority verification permits one valid open operation;
+assessment release requires all operations settled. Missing receipts, reused
+slots, reversed clocks, conflicting history and partial publication hold work.
+
+The optional `assessment_evidence_gate` applies inside `Lifecycle.claim` before
+sent time, outbox and resource changes, and is checked again for saved launches,
+cached runtime observations, each native GO and completion. Its protected,
+assignment-specific immutable release binds the actual saved decision, original
+ledger, controller/task plan, AOS candidate, full source bytes/sizes/Git modes,
+every actual checkpoint commit/tree/parent, and completed coordinator receipts.
+The coordinator publishes the exact source safety review before data commands.
+Final invocation profiles authorize only the committed `rhythm_form.acceptance`
+module and fixed migration/reconciliation, import/replay, restart, backup/restore
+and final-verification phases. They pin literal argv, cwd, tools, a clean explicit
+environment, protected input manifest, runtime target and output path. Command
+reports must match the existing maintained `owned_host_command` execution and
+positive cleanup receipt, exact retained streams and structured phase result.
+A caller-written label or unrelated raw file cannot supply a passing result.
+
+A genuine source failure permits only independent read-only review, with every
+downstream data category explicitly not run. A model PASS cannot cross that
+native boundary or become delivery. Genuine data failures may authorize safe
+native assessment and its actual existing `native_failed`/triage path; no native
+result is fabricated from coordinator evidence. Missing, stale or contradictory
+proof leaves the proposed assessor unclaimed. Corrected or repeated assessment
+requires a fresh real assignment-specific release and current exact source,
+operation and runtime proof. Native resources use a protected preclaim template
+and postclaim activation with the actual sent time/job deadline; lease and native
+execution expiry use the earlier original feature deadline. The three approved
+pytest commands and all existing native GO/ownership fences remain unchanged.
+Fresh failure triage also rechecks the actual prior native review, transcript and
+raw output hashes before claiming a job. Expiry is checked again after proof
+reads and native lease verification, so a slow read cannot extend authority.
+
+The native structural catalog and shards remain under the protected task-private
+metadata directory. The controller pins their exact bytes without granting model
+read access; only the sanitized writer descriptor and helper API belong in the
+existing approved-inputs surface. The helper and its sibling coverage contract
+each require an explicit saved input pin. Final command outputs are restricted
+to the released assignment, attempt and phase's exact evidence directory.

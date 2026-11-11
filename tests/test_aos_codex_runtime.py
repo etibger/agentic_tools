@@ -844,6 +844,9 @@ def test_native_owner_identity_change_never_signals_unrelated_process_or_reuses_
 
 def test_real_cancel_reconciles_native_check_before_cached_model_stop(tmp_path):
     p = native_fixture(tmp_path, 'cancel', attempt_id='native-cancel')
+    # This direct-native fixture has no lifecycle ledger or optional coordinator
+    # gate. Gated real-assignment authority is exercised by assessment evidence tests.
+    p.runtime._coordinator_evidence = lambda *args, **kwargs: None
     record = {'attempt_id': 'native-cancel', 'created_at': datetime.now(timezone.utc).isoformat(),
               'assignment': {'work_id': 'N', 'kind': 'assessment'},
               'recipe_digest': digest(p.recipe), 'thread_id': 'scripted-only', 'baseline': inventory(p.source),
