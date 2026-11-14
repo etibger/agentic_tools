@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -42,6 +43,7 @@ class ExecutionEnvelope(BaseModel):
     max_seconds: int = Field(ge=1)
     model: str = Field(min_length=1)
     effort: str = Field(min_length=1)
+    human_intent_policy: Literal['host-attested-v1'] | None = None
 
     @model_validator(mode='after')
     def startup_retry_policy(self):
@@ -177,6 +179,10 @@ def prepare_decision(store: Store, operation_id: str, work_id: str,
 
 def capabilities() -> dict:
     return {**version_receipt(), "coordinator_commands_version": 1,
+            "human_intent": {"policy": "host-attested-v1", "enrollment": "explicit and sticky per work",
+                             "ingestion": "trusted host Python API only; no MCP ingestion",
+                             "controls": "current instruction_id required for enrolled work",
+                             "automatic_chat_capture": False, "ownership_transfer": False},
             "source_digest": source_digest(), "check_adapters": adapter_identities(),
             "check_adapter_contract_version": 1,
             "source_scope": "AOS, reusable check-adapter and maintained project-adapter Python package files; excludes state, configuration, dependencies and documentation",

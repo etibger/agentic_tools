@@ -30,6 +30,10 @@ class BoundOperation(BaseModel):
     digest: str = Field(min_length=1)
 
 
+class ControlOperation(BoundOperation):
+    instruction_id: str | None = Field(default=None, min_length=1, max_length=128)
+
+
 Operation = Literal[
     "introduce-work", "present-concept", "register-contract", "prepare-decision",
     "reconcile-prerequisites", "admit", "pause", "resume", "cancel",
@@ -141,11 +145,14 @@ def create_coordinator_server(store: Store, *, decision_origin: str,
                 "expected_digest": request["digest"]}
         if operation == "admit":
             return lifecycle.admit(request["operation_id"], request["work_id"], **args)
-        return lifecycle.control(request["operation_id"], request["work_id"], operation, **args)
+        return lifecycle.control(request["operation_id"], request["work_id"], operation,
+                                 instruction_id=request.get('instruction_id'), **args)
 
     return server
 
 
 def schema_for(operation: Operation) -> type[BaseModel]:
+    if operation in {'pause', 'resume', 'cancel'}:
+        return ControlOperation
     return {"introduce-work": IntroductionRequest, "present-concept": ConceptRequest,
             "reconcile-prerequisites": PrerequisiteRequest}.get(operation, BoundOperation)

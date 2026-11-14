@@ -92,6 +92,8 @@ def main(argv: list[str] | None = None) -> int:
         elif name in ("introduce-work", "present-concept", "reconcile-prerequisites"):
             command.add_argument("--request", type=Path, required=True, help="Strict JSON request; no approval answer is accepted")
         elif name in ("register-contract", "admit", "pause", "resume", "cancel"):
+            if name in ('pause', 'resume', 'cancel'):
+                command.add_argument('--instruction-id', help='Current original human instruction for an enrolled route')
             command.add_argument("--operation-id", required=True, help="Stable ID; retry with identical arguments")
             command.add_argument("--work-id", required=True)
             command.add_argument("--expected-work-revision", required=True, type=int)
@@ -338,7 +340,8 @@ def main(argv: list[str] | None = None) -> int:
                                          expected_work_revision=args.expected_work_revision, expected_digest=args.digest)
             else:
                 result = lifecycle.control(args.operation_id, args.work_id, args.command,
-                                           expected_work_revision=args.expected_work_revision, expected_digest=args.digest)
+                                           expected_work_revision=args.expected_work_revision, expected_digest=args.digest,
+                                           instruction_id=args.instruction_id)
             print(json.dumps(result, indent=2))
             # Held/blocked requests are recorded facts, not successful admission.
             return 3 if result.get("blockers") or (args.command == "admit" and result.get("execution") != "eligible") else 0

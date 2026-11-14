@@ -151,6 +151,11 @@ def dashboard(snapshot: dict) -> dict:
                           'package_revision': challenge['concept_revision'], 'package_sha256': challenge['digest'],
                           'answer_destination': 'Use the separately qualified human decision surface; this dashboard is read-only.'})
     blockers = [{'title': b['code'], **b} for b in run.get('technical_blockers', [])]
+    intent = run.get('human_intent', {'disposition': 'unenrolled'})
+    if intent['disposition'] not in {'unenrolled', 'running'}:
+        blockers.append({'title': 'Current human instruction: ' + intent['disposition'],
+                         'owner': intent['owner'], 'detail': '; '.join(intent['problems']) or 'An explicit human hold remains effective.',
+                         'next_action': intent['next_action']})
     if source.get('recovery_hold'):
         blockers.append({'title': 'Recovery copy is held', 'owner': 'coordinator',
                          'detail': 'This ledger is a recovery copy, not adopted execution authority. Runtime and shared-budget sidecars were not restored.',
@@ -231,8 +236,9 @@ def dashboard(snapshot: dict) -> dict:
             'current_stage': source['work_id'], 'stage_status': 'Concept ' + source['concept_decision'] + ' · Execution ' + source['execution'],
             'attention_note': ('Legacy ownership is retired. Historical startup remains unknown; no delivery was accepted.' if retired else
                                'Approvals and execution holds are separate. Current data is a read-only service snapshot.'),
-            'next': {'owner': current[0]['executor'] if current else 'coordinator',
-                     'action': ('No execution remains for this retired work.' if retired else
+            'next': {'owner': intent.get('owner', current[0]['executor'] if current else 'coordinator'),
+                     'action': (intent['next_action'] if intent['disposition'] != 'unenrolled' else
+                                'No execution remains for this retired work.' if retired else
                                 'Observe the saved assignment; independent review follows a frozen result.' if current else 'Reconcile disposition and remaining qualification.'),
                      'dependency': 'Current authority, checks, ownership and shared limits still apply.'},
             'candidate': (run.get('candidate') or {}).get('identity'),

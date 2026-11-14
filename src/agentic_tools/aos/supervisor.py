@@ -410,8 +410,7 @@ def start(project_path: Path, request_path: Path, *, continuation_path: Path | N
             record = _read(store, work_id)
             if (target and record and _saved_contract(store, work_id)
                     and record['execution'] not in TERMINAL_EXECUTIONS and record['execution'] != 'paused'):
-                lifecycle.control(_operation(work_id, target, 'interrupt-' + str(record['revision'])), work_id, 'pause',
-                                  expected_work_revision=record['revision'], expected_digest=target)
+                lifecycle.pause_for_owner_interrupt(work_id)
             result = _result(work_id, 'interrupted', detail='Foreground owner stopped; saved work and decisions are retained',
                              next_action='Resume paused work explicitly before starting the same owner again')
         except (Rejected, OSError, ValueError, KeyError, TypeError, sqlite3.Error) as error:

@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from .store import Rejected, Store, canonical, digest, identifier, now
 from .checks import adapter_for, bindings, check_kind, validate_normalized, passed as evidence_passed
 from .checkout_boundary import reviewed_host, changes_allowed
+from . import human_intent
 
 
 SCHEMA = """
@@ -239,6 +240,7 @@ def view_in(db: sqlite3.Connection, work_id: str) -> dict:
     # Otherwise an unchanged pre-upgrade revision would falsely look corrupt.
     run = db.execute('SELECT contract FROM lifecycle WHERE work_id=?', (work_id,)).fetchone()
     source['technical_prerequisites'] = json.loads(run['contract'])['prerequisites'] if run else {}
+    source['human_intent'] = human_intent.current_in(db, work_id)
     source['prerequisite_evidence'] = [json.loads(r[0]) for r in db.execute("SELECT detail FROM lifecycle_event WHERE work_id=? AND kind='prerequisites_reconciled' ORDER BY event_id", (work_id,))]
     service = db.execute('SELECT * FROM worker_status WHERE singleton=1').fetchone()
     if service:
@@ -258,6 +260,7 @@ class Lifecycle:
             raise Rejected('read_only', 'Lifecycle control requires the trusted service store')
         with store._connection() as db:
             db.executescript(SCHEMA)
+            db.executescript(human_intent.SCHEMA)
 
     @classmethod
     def for_reading(cls, store: Store):
@@ -309,6 +312,8 @@ class Lifecycle:
             raise Rejected('incomplete_contract', 'Exact concept, baseline, delta, checks, independence, authority, resources and limits required')
         if contract.get('requires_detached_processes'):
             raise Rejected('detached_processes_unqualified', 'Assignments needing detached processes remain unqualified and cannot be admitted')
+        if contract.get('human_intent_policy') not in (None, human_intent.POLICY):
+            raise Rejected('human_intent', 'Unsupported human instruction policy')
         if contract['workflow'] not in ('bug-fix', 'feature-change'):
             raise Rejected('unsupported_workflow', 'Only the approved bug-fix and feature-change paths exist')
         if contract['workflow'] == 'feature-change' and not contract.get('compatibility_checks'):
@@ -334,6 +339,8 @@ class Lifecycle:
             if db.execute('SELECT 1 FROM lifecycle WHERE work_id=?', (work_id,)).fetchone():
                 raise Rejected('contract_exists', 'Retain the registered contract; revisions need explicit replan')
             db.execute('INSERT INTO lifecycle(work_id,contract) VALUES(?,?)', (work_id, canonical(contract)))
+            if contract.get('human_intent_policy') == human_intent.POLICY:
+                db.execute('INSERT OR IGNORE INTO human_intent_scope VALUES(?,?)', (work_id, contract['receiving_owner']))
             self._touch(db, work_id, 'contract_registered', contract)
             return self.store._record(db, operation_id, payload, {'work_id': work_id, 'execution': 'held'})
 
@@ -404,7 +411,7 @@ class Lifecycle:
         for field in exact:
             if field not in bounds or contract.get(field) != bounds[field]:
                 errors.append('Execution contract differs from approved ' + field)
-        for field in ('execution_policy', 'runtime_recipe', 'check_kinds', 'check_adapters', 'product_budget', 'adapter_architecture', 'assessment_evidence_gate', 'predispatch_feature_amendment', 'predispatch_recovery', 'predispatch_corrective_rebind'):
+        for field in ('human_intent_policy', 'execution_policy', 'runtime_recipe', 'check_kinds', 'check_adapters', 'product_budget', 'adapter_architecture', 'assessment_evidence_gate', 'predispatch_feature_amendment', 'predispatch_recovery', 'predispatch_corrective_rebind'):
             if field in bounds or field in contract:
                 if contract.get(field) != bounds.get(field):
                     errors.append('Execution contract differs from approved ' + field)
@@ -440,7 +447,7 @@ class Lifecycle:
     def _assignment_authority_errors_in(self, db: sqlite3.Connection, assignment: dict) -> list[str]:
         _, contract = self._run(db, assignment['work_id'])
         work = self.store._work(db, assignment['work_id'])
-        errors = self._approved_envelope_errors(db, assignment['work_id'], contract)
+        errors = self._approved_envelope_errors(db, assignment['work_id'], contract) + human_intent.errors_in(db, assignment['work_id'])
         if (assignment['concept_revision'] != work['current_concept']
                 or assignment['contract_revision'] != contract['revision']
                 or assignment['concept_digest'] != contract['concept_digest']
@@ -462,7 +469,7 @@ class Lifecycle:
     def _admission_errors(self, db: sqlite3.Connection, work_id: str) -> list[str]:
         run, contract = self._run(db, work_id)
         work = self.store._work(db, work_id)
-        errors = self._approved_envelope_errors(db, work_id, contract)
+        errors = self._approved_envelope_errors(db, work_id, contract) + human_intent.errors_in(db, work_id)
         if self.store.recovery_hold():
             errors.append('Recovery copy is not adopted; dispatch remains held and runtime/shared-budget sidecars are not restored')
         decision = db.execute("""SELECT d.*,r.status AS readback_status FROM decision d
@@ -554,6 +561,8 @@ class Lifecycle:
 
     def _enqueue(self, db: sqlite3.Connection, work_id: str, kind: str, predecessor: str) -> str | None:
         run, contract = self._run(db, work_id)
+        if human_intent.errors_in(db, work_id):
+            return None
         if run['control'] != 'none' or run['execution'] in TERMINAL_EXECUTIONS:
             return None
         if db.execute('SELECT COUNT(*) FROM assignment WHERE work_id=?', (work_id,)).fetchone()[0] >= contract['max_assignments']:
@@ -1052,6 +1061,10 @@ class Lifecycle:
 
     def _deliver_in(self, db: sqlite3.Connection, contract: dict, a: sqlite3.Row, result: dict) -> None:
         from . import assessment_evidence
+        current_intent = human_intent.current_in(db, a['work_id'])
+        if (human_intent.errors_in(db, a['work_id']) or
+                (current_intent['disposition'] != 'unenrolled' and current_intent['owner'] != contract['receiving_owner'])):
+            raise Rejected('human_intent', 'Current instruction or agreed ownership prevents handoff')
         if error := assessment_evidence.completion_error(self, db, a, result):
             raise Rejected('assessment_evidence', error)
         delivery = {'candidate': result['candidate'], 'accepted': True, 'committed': False, 'installed': False,
@@ -1146,7 +1159,9 @@ class Lifecycle:
                     disposition = self._reviewed_host_complete_in(db, run, contract, a, result, receipt_id)
                 else:
                     error = None
-                    if db.execute('SELECT 1 FROM technical_blocker WHERE work_id=?', (a['work_id'],)).fetchone():
+                    if human_intent.errors_in(db, a['work_id']):
+                        error = 'Current human instruction prevents candidate acceptance or successor admission'
+                    elif db.execute('SELECT 1 FROM technical_blocker WHERE work_id=?', (a['work_id'],)).fetchone():
                         error = 'An unresolved technical blocker prevents candidate acceptance or successor admission'
                     elif result.get('owned_processes') != [] or result.get('effects_reconciled') is not True or not partial_mutations_known(result):
                         error = 'Runtime terminal result does not prove owned-process exit and mutation reconciliation'
@@ -1165,7 +1180,8 @@ class Lifecycle:
                         self._block(db, a['work_id'], 'unknown_effects' if effects_unknown else 'assessment_failed' if a['kind'] == 'assessment' else 'assignment_failed', error)
                         finding = result.get('finding', {})
                         reports = result.get('initial_reports', {})
-                        if (a['kind'] == 'assessment' and result.get('executor') == contract['assessor']
+                        if (not human_intent.errors_in(db, a['work_id'])
+                                and a['kind'] == 'assessment' and result.get('executor') == contract['assessor']
                                 and result.get('candidate') == json.loads(a['candidate'])
                                 and result.get('observed_source_identity') == json.loads(a['candidate'])['source_identity']
                                 and reports.get('execution') and reports.get('review') and reports.get('independent') is True
@@ -1201,6 +1217,14 @@ class Lifecycle:
         self._fault('after_completion_commit')
         return {'disposition': disposition, 'duplicate': False}
 
+    def pause_for_owner_interrupt(self, work_id: str) -> None:
+        """Technical foreground-owner loss; never represented as human intent."""
+        with self.store._transaction() as db:
+            run, _ = self._run(db, work_id)
+            if run['execution'] not in TERMINAL_EXECUTIONS and run['execution'] != 'paused':
+                db.execute("UPDATE lifecycle SET resume_execution=execution,execution='paused' WHERE work_id=?", (work_id,))
+                self._touch(db, work_id, 'owner_interrupt', {'next_action': 'Explicit resume with current human evidence'})
+
     def reassess(self, operation_id: str, work_id: str) -> dict:
         payload = ['reassess', work_id]
         with self.store._transaction() as db:
@@ -1224,13 +1248,17 @@ class Lifecycle:
             return self.store._record(db, operation_id, payload, {'assignment_id': aid})
 
     def control(self, operation_id: str, work_id: str, action: str, *,
-                expected_work_revision: int | None = None, expected_digest: str | None = None) -> dict:
+                expected_work_revision: int | None = None, expected_digest: str | None = None,
+                instruction_id: str | None = None) -> dict:
         if action not in ('pause', 'resume', 'cancel'):
             raise Rejected('invalid_control', 'Use explicit pause, resume or cancel')
         if action == 'resume':
             self.reconcile(work_id)
         payload = self._command_payload(['control', work_id, action], expected_work_revision, expected_digest)
+        if instruction_id is not None:
+            payload.append(instruction_id)
         with self.store._transaction() as db:
+            human_intent.require_control_in(db, work_id, action, instruction_id)
             if prior := self.store._prior(db, operation_id, payload):
                 return prior
             self._command_guard(db, work_id, expected_work_revision, expected_digest)
@@ -1267,6 +1295,14 @@ class Lifecycle:
             # Retrying an unresolved stop does not replace newer user control or
             # erase the previous observation. The exact adapter stop may retry.
             return True
+        if reason == 'approved_envelope':
+            # Authority may have changed between the worker observation and this
+            # durable stop request. Linearize against the host's instruction
+            # transaction here; a newer resume must defeat an obsolete stop.
+            errors = self._assignment_authority_errors_in(db, dict(a))
+            if not errors:
+                return False
+            detail = '; '.join(errors)
         control = run['control'] if run['control'] in CANCELLATION_CONTROLS else 'owned_stop_requested'
         db.execute("UPDATE lifecycle SET execution=CASE WHEN execution='paused' THEN 'paused' ELSE 'held' END,control=? WHERE work_id=?",
                    (control, a['work_id']))
