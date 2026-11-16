@@ -176,6 +176,25 @@ def test_teardown(broken_teardown): pass
         self.assertTrue(tests['session_finished'])
         self.assertEqual(sum(t['expected_failure'] for t in tests['tests'].values()), 1)
 
+    def test_reporting_survives_a_shared_clock_monkeypatch(self):
+        # Production deadline tests patch the shared time module until fixture
+        # teardown. Event reporting must use its original instrumentation clock.
+        source = """import time
+def test_exhausted_clock(monkeypatch):
+    moments = iter([100.0])
+    monkeypatch.setattr(time, 'monotonic', lambda: next(moments))
+    assert time.monotonic() == 100.0
+"""
+        process, output, result = self.pytest_run('shared-clock', source)
+        self.assertEqual(process.returncode, 0, (result, (output / 'command.log').read_text()))
+        tests = json.loads((output / 'tests.json').read_text())
+        self.assertEqual(tests['counts'], {'passed': 1})
+        self.assertTrue(tests['session_finished'])
+        events = [json.loads(line) for line in (output / 'events.jsonl').read_text().splitlines()]
+        reports = [event for event in events if event['event'] == 'report']
+        self.assertEqual([event['phase'] for event in reports], ['setup', 'call', 'teardown'])
+        self.assertTrue(all(event['outcome'] == 'passed' for event in reports))
+
     def test_timeout_distinguishes_finished_active_and_unstarted(self):
         source = '''import time
 def test_a_pass(): pass

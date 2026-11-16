@@ -5,7 +5,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import time
+from time import monotonic as _monotonic
 
 import pytest
 
@@ -22,7 +22,7 @@ class Evidence:
         self.all_nodeids = []
 
     def emit(self, **event):
-        self.events.write(json.dumps({'monotonic': time.monotonic(), **event}) + '\n')
+        self.events.write(json.dumps({'monotonic': _monotonic(), **event}) + '\n')
         self.events.flush()
 
     def pytest_collection_modifyitems(self, session, config, items):
