@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import json
 from copy import deepcopy
+from datetime import datetime
 
 from .planning import validate_execution_plan, execution_tasks
-from .store import Rejected, digest
+from .store import Rejected, canonical, digest
 from .planning import Estimate
 from pydantic import ValidationError
 
@@ -274,6 +275,89 @@ def phase_errors_in(db, assignment):
         return []
     except (Rejected, KeyError, StopIteration, TypeError, ValueError) as error:
         return ['DI plan holds dispatch: ' + str(error)]
+
+
+def dependency_evidence_in(db, assignment):
+    """Return only qualified ancestor receipts, never arbitrary work history.
+
+    The caller must establish current launch authority. Historical candidates
+    may differ after a later writer; each saved input edge must still match.
+    """
+    package = package_in(db, assignment['work_id'])
+    if not _serial(package):
+        return []
+    errors = phase_errors_in(db, assignment)
+    if errors:
+        raise Rejected('dependency_evidence', '; '.join(errors))
+    proofs = _proofs_in(db, assignment['work_id'], digest(package))
+    entries, seen = [], set()
+
+    def observation(proof):
+        event = db.execute("SELECT event_id,created_at FROM lifecycle_event WHERE work_id=? "
+                           "AND kind='di_milestone_passed' AND detail=? ORDER BY event_id DESC LIMIT 1",
+                           (assignment['work_id'], canonical(proof))).fetchone()
+        if not event:
+            raise Rejected('dependency_evidence', 'Prerequisite lost its exact milestone observation')
+        return dict(event, detail_sha256=digest(proof))
+
+    def timestamp(value):
+        try:
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is not None:
+                return parsed
+        except (TypeError, ValueError):
+            pass
+        raise Rejected('dependency_evidence', 'Prerequisite ordering lacks a timezone-qualified host timestamp')
+
+    def before_start(proof, child):
+        # Completion receipt insertion follows successor enqueue in the same
+        # transaction. Acceptance must precede enqueue; receipt retention must
+        # precede send. Do not substitute receipt time for acceptance time.
+        origin = db.execute('SELECT concept_digest FROM assignment WHERE assignment_id=?',
+                            (proof['assignment_id'],)).fetchone()[0]
+        accepted = _proofs_in(db, assignment['work_id'], origin)[proof['milestone_id']]
+        receipt = db.execute('SELECT received_at FROM completion WHERE receipt_id=?', (proof['receipt_id'],)).fetchone()
+        if (timestamp(observation(accepted)['created_at']) > timestamp(child['created_at'])
+                or child['sent_at'] is not None and timestamp(receipt['received_at']) > timestamp(child['sent_at'])):
+            raise Rejected('dependency_evidence', 'Prerequisite acceptance or retained receipt follows its dependent task start')
+
+    def visit(proof):
+        identity = digest(proof)
+        if identity in seen:
+            return
+        if len(seen) >= 5 or not _verified_proof_in(db, assignment['work_id'], package, proof):
+            raise Rejected('dependency_evidence', 'Prerequisite lacks a qualified bounded completion chain')
+        seen.add(identity)
+        row = db.execute('SELECT * FROM assignment WHERE assignment_id=? AND work_id=?',
+                         (proof['assignment_id'], assignment['work_id'])).fetchone()
+        origin = db.execute('SELECT package FROM concept WHERE work_id=? AND digest=?',
+                            (assignment['work_id'], row['concept_digest'])).fetchone()
+        original = json.loads(origin[0])
+        if digest(original) != row['concept_digest'] or original['di_plan'] != package['di_plan']:
+            raise Rejected('dependency_evidence', 'Prerequisite package no longer matches its retained digest')
+        dependencies = _scope(row)['di_dependencies']
+        origin_proofs = _proofs_in(db, assignment['work_id'], row['concept_digest'])
+        for milestone, expected in dependencies.items():
+            parent = origin_proofs.get(milestone, {})
+            if digest(parent) != expected:
+                raise Rejected('dependency_evidence', 'Prerequisite receipt lost its exact input binding')
+            if row['kind'] in ('implementation', 'assessment') and json.loads(row['candidate']) != parent['candidate']:
+                raise Rejected('dependency_evidence', 'Prerequisite candidate differs from its saved input edge')
+            before_start(parent, row)
+            visit(parent)
+        receipt = dict(db.execute('SELECT receipt_id,fingerprint,disposition,received_at FROM completion WHERE receipt_id=?',
+                                  (proof['receipt_id'],)).fetchone())
+        entries.append({'proof': deepcopy(proof), 'proof_sha256': identity,
+                        'milestone_observation': observation(proof),
+                        'origin_milestone_observation': observation(origin_proofs[proof['milestone_id']]),
+                        'completion_observation': receipt,
+                        'assignment': dict(row), 'result': json.loads(row['result']),
+                        'package': original})
+
+    for milestone in _scope(assignment)['di_dependencies']:
+        before_start(proofs[milestone], assignment)
+        visit(proofs[milestone])
+    return entries
 
 
 def advance_in(lifecycle, db, assignment, result, receipt_id=None):

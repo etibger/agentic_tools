@@ -21,29 +21,36 @@ from test_aos_store import TEAM
 
 
 @pytest.fixture
-def case(tmp_path, monkeypatch):
+def case(tmp_path, monkeypatch, request):
+    options = getattr(request, 'param', {})
+    count = options.get('count', 4)
+    repairs = options.get('repairs', 1)
+    jobs = count + 3 * repairs
     source, outputs = tmp_path / 'source', tmp_path / 'outputs'
     source.mkdir(); outputs.mkdir()
     (source / 'fixture.py').write_text('answer = 0\n')
+    if options.get('packaging'):
+        (source / 'README.txt').write_text('SIMULATED original instructions\n')
     store = Store(tmp_path / 'state', (source, outputs))
-    budget = allowance(store.directory, max_assignments=7, max_seconds=420)
+    budget = allowance(store.directory, max_assignments=jobs, max_seconds=jobs * 60)
     budget.pop('kind')
     recipe = {'source': str(source), 'outputs': str(outputs), 'max_seconds': 60,
         'execution_policy': 'isolated-checkout-v1', 'instruction_manifest': {},
         'implementation_prompt': 'SIMULATED approved phase-specific writer instructions.',
         'assessment_prompt': 'SIMULATED approved initial and reassessment review instructions.',
-        'checkout_policy': {'native_validation': 'reviewed-host-v1', 'change_roots': ['fixture.py'],
+        'checkout_policy': {'native_validation': 'reviewed-host-v1',
+            'change_roots': ['fixture.py', 'README.txt'] if options.get('packaging') else ['fixture.py'],
             'endpoint_limits': {'minimum_free_bytes': 1, 'max_owned_growth_bytes': 100000,
                                 'max_output_bytes': 100000}},
         'checks': [{'name': 'fixture', 'result_kind': 'pytest', 'adapter_id': 'pytest-v1'}]}
-    bounds = contract({'digest': 'unused'}, max_assignments=7, max_repairs=1, max_startup_retries=0,
+    bounds = contract({'digest': 'unused'}, max_assignments=jobs, max_repairs=repairs, max_startup_retries=0,
         baseline=candidate(source, recipe=recipe)['identity'], execution_policy='isolated-checkout-v1',
         runtime_recipe=recipe, runtime_recipe_digest=digest(recipe), product_budget=budget,
         check_adapters={'pytest-v1': check_adapters.identities()['pytest-v1']})
     bounds.pop('concept_revision'); bounds.pop('concept_digest')
     team = [{**TEAM[0], 'name': name} for name in ('writer', 'assessor')]
     store.introduce('intro', 'PROMPT', 'SIMULATED corrective prompt', ['fixture.py'], team)
-    plan = serial_plan(bounds)
+    plan = serial_plan(bounds, count)
     concept = store.present('present', 'PROMPT', 1, 'PROMPT-DI', 1, 'SIMULATED corrective prompt',
         ['Synthetic source only'], team, bounds['authority'], execution_envelope=bounds, di_plan=plan)
     lifecycle = Lifecycle(store)

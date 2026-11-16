@@ -947,75 +947,147 @@ class Lifecycle:
                     or not assignment['candidate'] or assignment['candidate'] != run['candidate']):
                 raise Rejected('assessment_context', 'Review context requires the current authorized frozen assessment')
             purpose = self._assessment_context_in(db, assignment)
-            candidate = json.loads(assignment['candidate'])
-            task_id = json.loads(assignment['scope']).get('di_task_id')
-            if purpose['purpose'] == 'native_failure_triage':
-                return {'mode': 'native-failure-triage', 'assignment_id': assignment_id,
-                        'candidate': candidate, 'task_id': task_id,
-                        'origin': purpose['origin'], 'failure_result': purpose['failure_result']}
-            predecessor = self._review_predecessor_in(db, assignment, contract)
-            if predecessor is None:
-                # Existing purpose derivation verifies reviewed-host manual and
-                # continuation links. Do not invent a repair from latest rows.
-                if not reviewed_host(contract.get('runtime_recipe', {})):
-                    self._assessment_lineage_in(db, assignment, contract, run['cycle'])
-                return {'mode': 'assessment'}
-            repair, completion, repair_result, repair_receipt = predecessor
-            if completion['disposition'] != 'assessment_required' or repair['kind'] not in ('implementation', 'repair'):
-                raise Rejected('assessment_context', 'Review context has no qualified writer handoff')
-            if (repair['state'] != 'completed' or repair_result.get('status') != 'completed'
-                    or repair_result.get('executor') != contract['writer']
-                    or repair_result.get('candidate') != candidate
-                    or repair_result.get('owned_processes') != [] or repair_result.get('effects_reconciled') is not True
-                    or not partial_mutations_known(repair_result) or not repair_result.get('output')
-                    or self._assignment_authority_errors_in(db, dict(repair))):
-                raise Rejected('assessment_context', 'Review context writer receipt does not bind the current candidate')
-            repair_task = plan_runtime.task_in(db, repair)
-            assessment_task = plan_runtime.task_in(db, assignment)
-            if (task_id is not None and (assessment_task['depends_on'] != [repair_task['id']]
-                    or repair_task['kind'] != 'implementation')):
-                raise Rejected('assessment_context', 'Review context writer belongs to another planned task')
-            if repair['kind'] == 'implementation':
-                return {'mode': 'initial-assessment'}
-            rejected = self._review_predecessor_in(db, repair, contract)
-            if rejected is None:
-                raise Rejected('assessment_context', 'Completed repair lacks its exact rejected assessment')
-            prior, rejection, rejection_result, rejection_receipt = rejected
-            if (prior['kind'] != 'assessment' or prior['state'] != 'failed' or rejection['disposition'] != 'repair'
-                    or rejection_result.get('executor') != contract['assessor']
-                    or rejection_result.get('candidate') != json.loads(prior['candidate'])
-                    or rejection_result.get('observed_source_identity') != rejection_result['candidate']['source_identity']
-                    or rejection_result.get('owned_processes') != [] or rejection_result.get('effects_reconciled') is not True
-                    or not partial_mutations_known(rejection_result)
-                    or self._assignment_authority_errors_in(db, dict(prior))
-                    or plan_runtime.task_in(db, prior)['id'] != assessment_task['id']):
-                raise Rejected('assessment_context', 'Completed repair has no intact same-task corrective rejection')
-            finding = rejection_result.get('finding', {})
-            if (not isinstance(finding, dict) or finding.get('confirmed') is not True
-                    or finding.get('in_scope') is not True or not isinstance(finding.get('summary'), str)
-                    or not finding['summary'].strip()):
-                raise Rejected('assessment_context', 'Corrective rejection lacks concrete confirmed in-scope findings')
-            context = {'mode': 'post-repair-reassessment', 'assignment_id': assignment_id,
-                       'candidate': candidate, 'task_id': task_id,
-                       'repair_assignment': dict(repair), 'repair_receipt_id': repair_receipt,
-                       'repair_result': repair_result, 'rejected_assignment': dict(prior),
-                       'rejection_receipt_id': rejection_receipt, 'rejection_result': rejection_result}
-            if reviewed_host(contract.get('runtime_recipe', {})):
-                if not self._confirmed_review_finding(contract['runtime_recipe'], rejection_result):
-                    raise Rejected('assessment_context', 'Corrective rejection findings do not bind approved source scope')
-                marker, reports = rejection_result.get('reviewed_host_validation', {}), rejection_result.get('initial_reports', {})
-                if marker.get('phase') == 'triage':
-                    native = self._triage_context_for_repair_in(db, repair, prior['assignment_id'], contract, run['cycle'])
-                    context['native_failure'] = {'origin': native['origin'], 'failure_result': native['failure_result']}
-                elif (marker.get('mode') != 'reviewed-host-v1' or marker.get('phase') != 'review_rejected'
-                        or marker.get('review_verdict') != 'fail' or marker.get('review') != reports.get('review')
-                        or reports.get('independent') is not True or reports.get('execution') != []
-                        or rejection_result.get('checks') != [] or rejection_result.get('native_checks', []) != []
-                        or rejection_result.get('status') != 'failed' or rejection_result.get('runtime_turn_status') != 'completed'
-                        or not stopped_with_effects(rejection_result)
-                        or rejection_result.get('resource_limits', {}).get('breach', 'unknown') is not None):
-                    raise Rejected('assessment_context', 'Corrective rejection lost its qualified independent source review')
-            return context
+            return self._review_context_in(db, assignment, contract, run['cycle'], purpose)
+
+    def _review_assignment_errors_in(self, db, assignment, contract, *, historical=False):
+        if not historical:
+            return self._assignment_authority_errors_in(db, dict(assignment))
+        # The dependency caller verifies the origin package digest and receipt.
+        # Historical evidence grants no current approval or launch authority.
+        expected = plan_runtime.expected_scope_in(db, assignment, assignment_scope(contract, assignment['kind']))
+        if (assignment['concept_revision'] != contract['concept_revision']
+                or assignment['concept_digest'] != contract['concept_digest']
+                or assignment['contract_revision'] != contract['revision']
+                or assignment['executor'] != contract['assessor' if assignment['kind'] == 'assessment' else 'writer']
+                or assignment['requested_model'] != contract['model']
+                or assignment['requested_effort'] != contract['effort']
+                or assignment['scope'] != canonical(expected)):
+            return ['Historical review assignment differs from its qualified origin contract']
+        return []
+
+    def dependency_review_context(self, assignment_id: str) -> dict | None:
+        """Bounded historical proof for only a current task's DI ancestors."""
+        try:
+            with self.store._connection() as db:
+                assignment = db.execute('SELECT * FROM assignment WHERE assignment_id=?', (assignment_id,)).fetchone()
+                if assignment is None:
+                    raise Rejected('assignment_not_found', 'Unknown dependency evidence assignment')
+                package = plan_runtime.package_in(db, assignment['work_id'])
+                if not plan_runtime._serial(package):
+                    return None
+                run, _ = self._run(db, assignment['work_id'])
+                if (assignment['state'] not in ('proposed', 'sent', 'acknowledged', 'observed_active', 'waiting')
+                        or self._assignment_authority_errors_in(db, dict(assignment))
+                        or run['control'] != 'none' or run['execution'] in TERMINAL_EXECUTIONS
+                        or assignment['candidate'] != run['candidate']):
+                    raise Rejected('dependency_evidence', 'Dependency evidence requires the current authorized task')
+                entries = plan_runtime.dependency_evidence_in(db, assignment)
+                for entry in entries:
+                    prior = entry['assignment']
+                    contract = dict(entry['package']['execution_envelope'],
+                        concept_revision=prior['concept_revision'], concept_digest=prior['concept_digest'])
+                    if self._review_assignment_errors_in(db, prior, contract, historical=True):
+                        raise Rejected('dependency_evidence', 'Prerequisite assignment differs from its origin contract')
+                    if prior['kind'] == 'assessment':
+                        error = self._assessment_error(contract, prior, entry['result'])
+                        if error:
+                            raise Rejected('dependency_evidence', error)
+                        cycle = 0
+                        predecessor = self._review_predecessor_in(db, prior, contract)
+                        if predecessor and predecessor[0]['kind'] == 'repair':
+                            rejected = self._review_predecessor_in(db, predecessor[0], contract)
+                            marker = rejected[2].get('reviewed_host_validation', {}) if rejected else {}
+                            if marker.get('phase') == 'triage':
+                                origin_cycle = marker.get('triage_origin', {}).get('cycle')
+                                if type(origin_cycle) is not int or not 0 <= origin_cycle < contract['max_repairs']:
+                                    raise Rejected('dependency_evidence', 'Historical correction cycle lacks exact evidence')
+                                cycle = origin_cycle + 1
+                        purpose = self._assessment_lineage_in(db, prior, contract, cycle)
+                        entry['review_context'] = self._review_context_in(
+                            db, prior, contract, cycle, purpose, historical=True)
+                return {'assignment_id': assignment_id, 'work_id': assignment['work_id'],
+                        'assignment_observation': {key: assignment[key] for key in ('created_at', 'sent_at')},
+                        'concept_digest': assignment['concept_digest'], 'contract_revision': assignment['contract_revision'],
+                        'task_id': plan_runtime.task_in(db, assignment)['id'], 'plan_sha256': digest(package['di_plan']),
+                        'candidate': json.loads(assignment['candidate']) if assignment['candidate'] else None,
+                        'dependencies': json.loads(assignment['scope'])['di_dependencies'], 'ancestors': entries}
+        except Rejected:
+            raise
+        except (KeyError, TypeError, ValueError, AttributeError, StopIteration) as error:
+            raise Rejected('dependency_evidence', 'Retained dependency evidence is malformed') from error
+
+    def _review_context_in(self, db, assignment, contract, cycle, purpose, *, historical=False):
+        """Phase derivation shared by live review and qualified historical proof."""
+        candidate = json.loads(assignment['candidate'])
+        task_id = json.loads(assignment['scope']).get('di_task_id')
+        if purpose['purpose'] == 'native_failure_triage':
+            return {'mode': 'native-failure-triage', 'assignment_id': assignment['assignment_id'],
+                    'candidate': candidate, 'task_id': task_id,
+                    'origin': purpose['origin'], 'failure_result': purpose['failure_result']}
+        predecessor = self._review_predecessor_in(db, assignment, contract)
+        if predecessor is None:
+            # Existing purpose derivation verifies reviewed-host manual and
+            # continuation links. Do not invent a repair from latest rows.
+            if not reviewed_host(contract.get('runtime_recipe', {})):
+                self._assessment_lineage_in(db, assignment, contract, cycle)
+            return {'mode': 'assessment'}
+        repair, completion, repair_result, repair_receipt = predecessor
+        if completion['disposition'] != 'assessment_required' or repair['kind'] not in ('implementation', 'repair'):
+            raise Rejected('assessment_context', 'Review context has no qualified writer handoff')
+        if (repair['state'] != 'completed' or repair_result.get('status') != 'completed'
+                or repair_result.get('executor') != contract['writer']
+                or repair_result.get('candidate') != candidate
+                or repair_result.get('owned_processes') != [] or repair_result.get('effects_reconciled') is not True
+                or not partial_mutations_known(repair_result) or not repair_result.get('output')
+                or self._review_assignment_errors_in(db, repair, contract, historical=historical)):
+            raise Rejected('assessment_context', 'Review context writer receipt does not bind the current candidate')
+        repair_task = plan_runtime.task_in(db, repair)
+        assessment_task = plan_runtime.task_in(db, assignment)
+        if (task_id is not None and (assessment_task['depends_on'] != [repair_task['id']]
+                or repair_task['kind'] != 'implementation')):
+            raise Rejected('assessment_context', 'Review context writer belongs to another planned task')
+        if repair['kind'] == 'implementation':
+            return {'mode': 'initial-assessment'}
+        rejected = self._review_predecessor_in(db, repair, contract)
+        if rejected is None:
+            raise Rejected('assessment_context', 'Completed repair lacks its exact rejected assessment')
+        prior, rejection, rejection_result, rejection_receipt = rejected
+        if (prior['kind'] != 'assessment' or prior['state'] != 'failed' or rejection['disposition'] != 'repair'
+                or rejection_result.get('executor') != contract['assessor']
+                or rejection_result.get('candidate') != json.loads(prior['candidate'])
+                or rejection_result.get('observed_source_identity') != rejection_result['candidate']['source_identity']
+                or rejection_result.get('owned_processes') != [] or rejection_result.get('effects_reconciled') is not True
+                or not partial_mutations_known(rejection_result)
+                or self._review_assignment_errors_in(db, prior, contract, historical=historical)
+                or plan_runtime.task_in(db, prior)['id'] != assessment_task['id']):
+            raise Rejected('assessment_context', 'Completed repair has no intact same-task corrective rejection')
+        finding = rejection_result.get('finding', {})
+        if (not isinstance(finding, dict) or finding.get('confirmed') is not True
+                or finding.get('in_scope') is not True or not isinstance(finding.get('summary'), str)
+                or not finding['summary'].strip()):
+            raise Rejected('assessment_context', 'Corrective rejection lacks concrete confirmed in-scope findings')
+        context = {'mode': 'post-repair-reassessment', 'assignment_id': assignment['assignment_id'],
+                   'candidate': candidate, 'task_id': task_id,
+                   'repair_assignment': dict(repair), 'repair_receipt_id': repair_receipt,
+                   'repair_result': repair_result, 'rejected_assignment': dict(prior),
+                   'rejection_receipt_id': rejection_receipt, 'rejection_result': rejection_result}
+        if reviewed_host(contract.get('runtime_recipe', {})):
+            if not self._confirmed_review_finding(contract['runtime_recipe'], rejection_result):
+                raise Rejected('assessment_context', 'Corrective rejection findings do not bind approved source scope')
+            marker, reports = rejection_result.get('reviewed_host_validation', {}), rejection_result.get('initial_reports', {})
+            if marker.get('phase') == 'triage':
+                native = self._triage_context_for_repair_in(db, repair, prior['assignment_id'], contract, cycle,
+                                                          historical=historical)
+                context['native_failure'] = {'origin': native['origin'], 'failure_result': native['failure_result']}
+            elif (marker.get('mode') != 'reviewed-host-v1' or marker.get('phase') != 'review_rejected'
+                    or marker.get('review_verdict') != 'fail' or marker.get('review') != reports.get('review')
+                    or reports.get('independent') is not True or reports.get('execution') != []
+                    or rejection_result.get('checks') != [] or rejection_result.get('native_checks', []) != []
+                    or rejection_result.get('status') != 'failed' or rejection_result.get('runtime_turn_status') != 'completed'
+                    or not stopped_with_effects(rejection_result)
+                    or rejection_result.get('resource_limits', {}).get('breach', 'unknown') is not None):
+                raise Rejected('assessment_context', 'Corrective rejection lost its qualified independent source review')
+        return context
 
     def triage_context_for_repair(self, repair_assignment_id: str, triage_assignment_id: str) -> dict:
         """Return historical failure evidence only for its exact currently authorized repair."""
@@ -1034,7 +1106,7 @@ class Lifecycle:
             return self._triage_context_for_repair_in(db, repair, triage_assignment_id, contract, run['cycle'])
 
     def _triage_context_for_repair_in(self, db: sqlite3.Connection, repair: sqlite3.Row,
-                                      triage_assignment_id: str, contract: dict, cycle: int) -> dict:
+                                      triage_assignment_id: str, contract: dict, cycle: int, *, historical=False) -> dict:
         """Historical proof only; callers must validate current repair or reassessment."""
         current = dict(repair)
         for depth in range(3):
@@ -1058,7 +1130,7 @@ class Lifecycle:
             if (prior['assignment_id'] != triage_assignment_id or prior['kind'] != 'assessment'
                     or prior['state'] != 'failed' or completion['disposition'] != 'repair'
                     or completion['fingerprint'] != digest([prior['assignment_id'], result])
-                    or self._assignment_authority_errors_in(db, dict(prior))):
+                    or self._review_assignment_errors_in(db, prior, contract, historical=historical)):
                 break
             context = self._assessment_lineage_in(db, prior, contract, cycle - 1)
             marker, reports = result.get('reviewed_host_validation', {}), result.get('initial_reports', {})

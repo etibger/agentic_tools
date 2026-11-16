@@ -34,6 +34,7 @@ def case(tmp_path, monkeypatch, request):
     errors = []
     lifecycle = SimpleNamespace(store=SimpleNamespace(directory=state),
                                 assessment_review_context=lambda *_: {'mode': 'initial-assessment'},
+                                dependency_review_context=lambda *_: None,
                                 assignment_authority_errors=lambda assignment: list(errors))
     runtime = CodexRuntime(lifecycle, {'WORK': base}, work_id='WORK')
     # This existing fixture selects no coordinator evidence gate.
