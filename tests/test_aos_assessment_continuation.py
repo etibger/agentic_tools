@@ -58,6 +58,11 @@ def recovered(project_setup, monkeypatch, request):
         writer = p.lifecycle._enqueue(db, 'FIXTURE', 'implementation', 'fixture-original')
         db.execute("UPDATE assignment SET state='completed',result=? WHERE assignment_id=?", (canonical({'candidate': frozen}), writer))
         db.execute("UPDATE lifecycle SET candidate=?,execution='held' WHERE work_id='FIXTURE'", (canonical(frozen),))
+        from agentic_tools.aos import plan_runtime
+        completed_writer = dict(db.execute('SELECT * FROM assignment WHERE assignment_id=?', (writer,)).fetchone())
+        plan_runtime.advance_in(p.lifecycle, db, completed_writer, {'candidate': frozen,
+            'output': 'SIMULATED:qualified original freeze', 'owned_processes': [], 'effects_reconciled': True})
+
         assessor = p.lifecycle._enqueue(db, 'FIXTURE', 'assessment', 'fixture-original-assessment')
         db.execute("UPDATE assignment SET state='failed' WHERE assignment_id=?", (assessor,))
         p.lifecycle._block(db, 'FIXTURE', 'assessment_recovered', 'SIMULATED historical recovery')
@@ -349,3 +354,24 @@ def test_invalid_extension_crash_replay_does_not_change_journal(exhausted_readin
     with pytest.raises(Rejected):
         p.extend()
     assert p.readiness_journal.read_bytes() == before
+
+
+@pytest.mark.parametrize('mutation', ['missing-proof', 'wrong-candidate'])
+def test_continuation_cannot_inherit_unverified_candidate_freeze(recovered, mutation):
+    p = recovered
+    packet = p.prepare()
+    before = p.lifecycle.assignments()
+    decisions = p.store.read('FIXTURE')['decisions']
+    with p.store._transaction() as db:
+        if mutation == 'missing-proof':
+            db.execute("DELETE FROM lifecycle_event WHERE kind='di_milestone_passed'")
+        else:
+            row = db.execute("SELECT event_id,detail FROM lifecycle_event WHERE kind='di_milestone_passed'").fetchone()
+            detail = json.loads(row['detail'])
+            detail['candidate']['identity'] = 'sha256:unrelated-candidate'
+            db.execute('UPDATE lifecycle_event SET detail=? WHERE event_id=?', (canonical(detail), row['event_id']))
+    with pytest.raises(Rejected, match='prior verified candidate-freeze'):
+        continuation.publish(p.lifecycle, packet)
+    assert p.lifecycle.assignments() == before
+    assert p.store.read('FIXTURE')['decisions'] == decisions
+    assert p.lifecycle.snapshot('FIXTURE')['execution'] == 'held'

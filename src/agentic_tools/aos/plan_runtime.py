@@ -120,6 +120,35 @@ def advance_in(lifecycle, db, assignment, result):
         'assignment_id': assignment['assignment_id'], 'candidate': candidate, 'evidence': evidence})
 
 
+def inherit_frozen_candidate_in(lifecycle, db, work_id, previous_digest, candidate):
+    """Called inside a validated technical-continuation publication transaction.
+
+    A new approval identity cannot erase the exact prior candidate-freeze proof.
+    Missing proof, changed plans or changed candidates remain held; this creates
+    no approval and never reconstructs evidence from a completed status alone.
+    """
+    current = package_in(db, work_id)
+    row = db.execute('SELECT package FROM concept WHERE work_id=? AND digest=?',
+                     (work_id, previous_digest)).fetchone()
+    if not row:
+        raise Rejected('di_milestone_failed', 'Prior candidate-freeze package is missing')
+    previous = json.loads(row[0])
+    if digest(previous) != previous_digest or previous.get('di_plan') != current['di_plan']:
+        raise Rejected('di_milestone_failed', 'Technical continuation must preserve the exact DI plan')
+    milestone = next(t['milestone'] for t in current['di_plan']['tasks'] if t['kind'] == 'implementation')
+    for row in db.execute("SELECT detail FROM lifecycle_event WHERE work_id=? AND kind='di_milestone_passed' ORDER BY event_id DESC", (work_id,)):
+        proof = json.loads(row[0])
+        if (proof.get('concept_digest') == previous_digest and proof.get('milestone_id') == milestone
+                and proof.get('candidate') == candidate
+                and proof.get('evidence', {}).get('candidate-frozen', {}).get('candidate') == candidate):
+            detail = deepcopy(proof)
+            detail.update(concept_digest=digest(current), inherited_from_digest=previous_digest,
+                          inheritance_reason='Validated technical continuation preserves the exact plan and candidate')
+            lifecycle._touch(db, work_id, 'di_milestone_passed', detail)
+            return
+    raise Rejected('di_milestone_failed', 'Technical continuation needs prior verified candidate-freeze evidence')
+
+
 def record_forecast(lifecycle, operation_id, work_id, expected_work_revision, digest, task_id,
                     reason, forecast, actuals):
     """Trusted host observations never rewrite originals or enlarge hard limits."""

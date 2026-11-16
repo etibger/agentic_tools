@@ -64,8 +64,10 @@ def context(project_setup, monkeypatch):
     p.services = []
     p.progress = []
     p.close_locked = []
+    assessed = assessment()
+    assessed['checks'][0]['name'] = p.request['concept']['execution_envelope']['required_checks'][0]
     p.plan = [{'kind': 'implementation', 'result': implementation()},
-              {'kind': 'assessment', 'result': assessment()}]
+              {'kind': 'assessment', 'result': assessed}]
     # Native typed receipt validation has its own execution tests. This seam
     # allows synthetic assessment outputs while keeping real admission/controls.
     monkeypatch.setattr(Lifecycle, '_assessment_error', lambda *_: None)
@@ -104,6 +106,23 @@ def context(project_setup, monkeypatch):
     p.store = lambda: Store(p.state, (p.source, p.outputs))
     p.count = lambda: sqlite3.connect(p.state / 'simulated-runtime.sqlite3').execute('SELECT count(*) FROM attempt').fetchone()[0]
     return p
+
+
+def test_prepared_di_plan_preserves_store_package_identity(project_setup):
+    """Presentation and recovery must bind the same plan as the saved Store."""
+    from agentic_tools.aos.store import digest
+
+    p = project_setup
+    packet = p.run()
+    store = Store(p.state, (p.source, p.outputs))
+    store.introduce(**packet['introduction'])
+    presented = store.present(**packet['concept'])
+    package = supervisor._package(packet['concept'])
+    assert package == store.read('FIXTURE')['concepts'][-1]['package']
+    assert digest(package) == presented['digest']
+    changed = copy.deepcopy(packet['concept'])
+    changed['di_plan']['tasks'][0]['definition_of_done'].append('Additional required outcome')
+    assert digest(supervisor._package(changed)) != presented['digest']
 
 
 def test_once_approved_owner_delivers_without_chat_wakeup(context):

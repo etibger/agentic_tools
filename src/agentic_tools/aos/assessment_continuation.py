@@ -517,6 +517,8 @@ def publish(lifecycle, packet):
         current = lifecycle.store._work(db, work_id)
         if current['current_concept'] != package['revision'] or lifecycle._approved_envelope_errors(db, work_id, expected):
             _reject('Successor concept and execution contract differ')
+        from . import plan_runtime
+        plan_runtime.inherit_frozen_candidate_in(lifecycle, db, work_id, audit['original_contract']['concept_digest'], meta['candidate'])
         _schema(db, create=True)
         record = {'format': FORMAT, 'operation_id': operation, 'work_id': work_id, 'metadata': meta,
                   'original_contract': audit['original_contract'], 'registered_contract': expected,

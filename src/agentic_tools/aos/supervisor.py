@@ -37,7 +37,7 @@ def _package(concept: dict) -> dict:
     result = {'format': 'aos-concept-v1', **{key: concept[key] for key in (
         'work_id', 'package_id', 'revision', 'body', 'acceptance', 'team_envelope', 'authority')}}
     result.update({key: concept[key] for key in ('recommendation', 'alternative', 'consequence',
-        'execution_envelope', 'decision_context') if concept.get(key) is not None})
+        'execution_envelope', 'decision_context', 'di_plan') if concept.get(key) is not None})
     return result
 
 

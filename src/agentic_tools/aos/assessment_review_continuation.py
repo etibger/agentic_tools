@@ -332,6 +332,9 @@ def publish(lifecycle, packet):
         _held(lifecycle, db, meta)
         if lifecycle._approved_envelope_errors(db, work_id, expected):
             _reject('New concept and execution contract differ')
+        from . import plan_runtime
+        _, prior_contract = lifecycle._run(db, work_id)
+        plan_runtime.inherit_frozen_candidate_in(lifecycle, db, work_id, prior_contract['concept_digest'], meta['incident']['candidate'])
         _schema(db, create=True)
         record = {'format': FORMAT, 'metadata': meta, 'registered_contract': expected, 'packet_digest': digest(packet)}
         db.execute(f'INSERT INTO {TABLE} VALUES(?,?,?,?)', (operation, work_id, digest(packet), canonical(record)))

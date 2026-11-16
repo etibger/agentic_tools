@@ -34,6 +34,10 @@ def blocked_review(recovered, monkeypatch):
         repair = p.lifecycle._enqueue(db, 'FIXTURE', 'repair', 'fixture-doc-repair')
         db.execute("UPDATE assignment SET state='completed',terminal_at=? WHERE assignment_id=?", (now(), repair))
         frozen = candidate(p.source, recipe=old['runtime_recipe'])
+        from agentic_tools.aos import plan_runtime
+        completed_repair = dict(db.execute('SELECT * FROM assignment WHERE assignment_id=?', (repair,)).fetchone())
+        plan_runtime.advance_in(p.lifecycle, db, completed_repair, {'candidate': frozen,
+            'output': 'SIMULATED:qualified repair freeze', 'owned_processes': [], 'effects_reconciled': True})
         db.execute("UPDATE lifecycle SET candidate=?,cycle=1,execution='held' WHERE work_id='FIXTURE'", (canonical(frozen),))
         failed = p.lifecycle._enqueue(db, 'FIXTURE', 'assessment', 'fixture-blocked-review')
         out = p.outputs / failed
@@ -173,6 +177,7 @@ def test_supervisor_presents_new_review_packet_then_dispatches_only_assessor(blo
     cleanup = {'stopped': True, 'effects_reconciled': True, 'owned_processes': [],
                'partial_mutations': {'status': 'none', 'changes': []}}
     result = assessment(candidate=p.final_candidate, **cleanup)
+    result['checks'][0]['name'] = p.old_contract['required_checks'][0]
     reference = {'path': str(p.outputs / 'simulated-passing-review'), 'sha256': 'c' * 64}
     for check in result['checks']:
         check.update(native_check_id='simulated-native-check', cleanup=cleanup)
