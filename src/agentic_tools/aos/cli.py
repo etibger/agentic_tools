@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         command.add_argument('--intent-id', required=True)
         if name == 'archive-publish-local':
             command.add_argument('--fake-destination', type=Path, required=True)
-    for name in ("serve", "serve-coordinator", "status", "archive-preview", "archive-prepare-local", "prepare-decision", "decide-serve", "worker", "backup-ledger", "recover-startup-approval",
+    for name in ("serve", "serve-coordinator", "status", "archive-preview", "archive-prepare-local", "prepare-decision", "decide-serve", "intent-serve", "worker", "backup-ledger", "recover-startup-approval",
                  "introduce-work", "present-concept", "register-contract", "admit", "pause", "resume", "cancel",
                  "dashboard-serve", "dashboard-inspect", "dashboard-stop", "reconcile-prerequisites", "restore-ledger", "recover-legacy-cancellation", "recover-startup-failure", "continue-recovered-startup", "recover-assessment-startup", "prepare-assessment-continuation",
                  "prepare-source-review-evidence", "prepare-assessment-review-continuation",
@@ -61,7 +61,14 @@ def main(argv: list[str] | None = None) -> int:
         command = commands.add_parser(name)
         command.add_argument("--state-dir", type=Path, required=True, help="Private authoritative directory outside all worker-writable roots")
         command.add_argument("--worker-writable-root", type=Path, action="append", required=True, help="Declare each worker-writable root; actual runtime denial still needs verification")
-        if name.startswith("dashboard-"):
+        if name == 'intent-serve':
+            command.add_argument('--work-id', required=True)
+            command.add_argument('--operator-key', type=Path, required=True)
+            command.add_argument('--certificate', type=Path, required=True)
+            command.add_argument('--key', type=Path, required=True)
+            command.add_argument('--port', type=int, default=8444)
+            command.add_argument('--qualification-reference', required=True)
+        elif name.startswith("dashboard-"):
             if name == "dashboard-serve":
                 command.add_argument("--work", action="append", required=True, help="Explicit allowed view: kebab-case-alias=WORK_ID; repeat for multiple works")
                 command.add_argument("--port", type=int, required=True, help="Loopback HTTP port; 0 requests an unused disposable port")
@@ -145,6 +152,13 @@ def main(argv: list[str] | None = None) -> int:
                                  help="Operator evidence reference; this label alone is not proof of human action")
     args = parser.parse_args(argv)
     try:
+        if args.command == 'intent-serve':
+            from .intent_operator import serve
+            store = Store(args.state_dir, tuple(args.worker_writable_root))
+            serve(store, work_id=args.work_id, operator_key=args.operator_key,
+                  certificate=str(args.certificate), key=str(args.key), port=args.port,
+                  qualification_reference=args.qualification_reference)
+            return 0
         if args.command == 'start':
             from .supervisor import start
             options = {'continuation_path': args.continuation} if args.continuation is not None else {}

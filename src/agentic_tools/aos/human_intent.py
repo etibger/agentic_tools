@@ -147,7 +147,7 @@ def require_control_in(db, work_id: str, action: str, instruction_id: str | None
         raise Rejected('human_intent', 'Lifecycle action conflicts with the current human instruction')
 
 
-def record(lifecycle, evidence: dict, *, capability: object) -> dict:
+def record(lifecycle, evidence: dict, *, capability: object, expected_current: dict | None = None) -> dict:
     """Called only by a trusted host bridge after inspecting original evidence.
 
     Unknown provenance may be retained to hold work, never to grant permission.
@@ -157,6 +157,9 @@ def record(lifecycle, evidence: dict, *, capability: object) -> dict:
     host = lifecycle.store._authorize(capability)
     instruction = Instruction.model_validate(evidence, strict=True).model_dump()
     with lifecycle.store._transaction() as db:
+        for work_id, expected in (expected_current or {}).items():
+            if digest(current_in(db, work_id)) != expected:
+                raise Rejected('stale_human_intent', 'Instruction evidence changed; refresh the operator form before giving a new instruction')
         before = {r[0]: current_in(db, r[0]) for r in db.execute('SELECT work_id FROM human_intent_scope').fetchall()}
         prior = db.execute('SELECT evidence FROM human_instruction WHERE instruction_id=?',
                            (instruction['instruction_id'],)).fetchone()
