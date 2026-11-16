@@ -113,6 +113,7 @@ def _depths(graph):
 
 class DIPlan(PlanModel):
     format: Literal['aos-di-plan-v1']
+    execution_profile: Literal['serial-milestones-v1'] | None = None
     tasks: Annotated[list[PlanTask], Field(min_length=1, max_length=128)]
     milestones: Annotated[list[PlanMilestone], Field(min_length=1, max_length=128)]
     replan_triggers: Texts
@@ -160,11 +161,31 @@ class DIPlan(PlanModel):
                 if predecessor.milestone != task.milestone and predecessor.milestone not in ancestors:
                     raise ValueError('Task ' + task.id + ' dependency ' + key
                                      + ' requires its milestone in the transitive milestone prerequisites')
-                if task.kind == 'implementation' and predecessor.kind == 'assessment':
+                if (self.execution_profile != 'serial-milestones-v1'
+                        and task.kind == 'implementation' and predecessor.kind == 'assessment'):
                     raise ValueError('Implementation task ' + task.id + ' cannot depend on assessment task ' + key)
-            if task.kind == 'implementation' and any(
+            if self.execution_profile != 'serial-milestones-v1' and task.kind == 'implementation' and any(
                     other.kind == 'assessment' and other.milestone in ancestors for other in self.tasks):
                 raise ValueError('Implementation task ' + task.id + ' cannot follow an assessment milestone')
+        if self.execution_profile == 'serial-milestones-v1':
+            if len(self.tasks) not in (2, 4, 6) or len(self.milestones) != len(self.tasks):
+                raise ValueError('serial-milestones-v1 requires exactly 2, 4 or 6 tasks and '
+                                 'the same number of milestones, one task per milestone')
+            for index, (task, milestone) in enumerate(zip(self.tasks, self.milestones)):
+                kind = 'implementation' if index % 2 == 0 else 'assessment'
+                if task.kind != kind:
+                    raise ValueError('serial-milestones-v1 tasks must alternate implementation and '
+                                     'assessment in list order; task ' + task.id + ' must be ' + kind)
+                if task.milestone != milestone.id or milestone.task_ids != [task.id]:
+                    raise ValueError('serial-milestones-v1 requires exactly one task per milestone '
+                                     'in matching list order; task ' + task.id + ' and milestone ' + milestone.id)
+                previous_task = [self.tasks[index - 1].id] if index else []
+                previous_milestone = [self.milestones[index - 1].id] if index else []
+                if task.depends_on != previous_task or milestone.depends_on != previous_milestone:
+                    raise ValueError('serial-milestones-v1 supports a serial chain only: task ' + task.id
+                                     + ' dependencies must be ' + str(previous_task) + ' and milestone '
+                                     + milestone.id + ' dependencies must be ' + str(previous_milestone)
+                                     + '; parallel graphs and skipped checkpoints are unsupported')
         return self
 
 
@@ -187,37 +208,47 @@ def validate_plan(value, team=None) -> dict:
     return deepcopy(value)
 
 
-def validate_execution_plan(plan, team, envelope) -> dict:
-    """Bind a generic plan to the supported writer/assessment lifecycle.
+def execution_tasks(plan: dict) -> list[dict]:
+    """Return the validated execution order without changing digest-bound input."""
+    validated = validate_plan(plan)
+    if validated.get('execution_profile') == 'serial-milestones-v1':
+        return validated['tasks']
+    return sorted(validated['tasks'], key=lambda task: task['kind'] == 'assessment')
 
-    The current adapter has one frozen-candidate handoff and one independent
-    acceptance gate. Extra milestones need separately approved work until an
-    execution adapter can enforce their evidence, not merely display them.
-    """
+
+def validate_execution_plan(plan, team, envelope) -> dict:
+    """Bind an aggregate or explicit serial plan to its approved lifecycle."""
     from .store import Rejected
 
     validated = validate_plan(plan, team)
     parsed = DIPlan.model_validate(plan, strict=True)
-    if len(parsed.tasks) != 2:
+    serial = parsed.execution_profile == 'serial-milestones-v1'
+    if not serial and len(parsed.tasks) != 2:
         raise Rejected('invalid_di_plan', 'This adapter requires one aggregate task per execution phase. '
                        'Split additional task gates into separately approved work; bulk completion is not task evidence')
     if not isinstance(envelope, dict):
         raise Rejected('invalid_di_plan', 'Plan needs the exact approved execution envelope')
-    milestone_ids = {kind: {task.milestone for task in parsed.tasks if task.kind == kind}
-                     for kind in ('implementation', 'assessment')}
-    if (len(parsed.milestones) != 2 or any(len(ids) != 1 for ids in milestone_ids.values())
-            or milestone_ids['implementation'] == milestone_ids['assessment']):
-        raise Rejected('invalid_di_plan', 'This execution adapter requires exactly two milestones: '
-                       'implementation and independent assessment. Split extra milestones into '
-                       'separately approved work; decorative gates cannot enforce progression')
     milestones = {milestone.id: milestone for milestone in parsed.milestones}
-    implementation_id = next(iter(milestone_ids['implementation']))
-    assessment_id = next(iter(milestone_ids['assessment']))
-    implementation = milestones[implementation_id]
-    assessment = milestones[assessment_id]
-    if implementation.depends_on or assessment.depends_on != [implementation_id]:
-        raise Rejected('invalid_di_plan', 'Implementation must have no milestone prerequisites; '
-                       'independent assessment must depend on the implementation milestone')
+    if serial:
+        assignments = envelope.get('max_assignments')
+        if type(assignments) is not int or assignments < len(parsed.tasks):
+            raise Rejected('invalid_di_plan', 'serial-milestones-v1 needs max_assignments of at least '
+                           + str(len(parsed.tasks)) + ' to execute every planned task; approved limits are not widened')
+    else:
+        milestone_ids = {kind: {task.milestone for task in parsed.tasks if task.kind == kind}
+                         for kind in ('implementation', 'assessment')}
+        if (len(parsed.milestones) != 2 or any(len(ids) != 1 for ids in milestone_ids.values())
+                or milestone_ids['implementation'] == milestone_ids['assessment']):
+            raise Rejected('invalid_di_plan', 'This execution adapter requires exactly two milestones: '
+                           'implementation and independent assessment. Split extra milestones into '
+                           'separately approved work; decorative gates cannot enforce progression')
+        implementation_id = next(iter(milestone_ids['implementation']))
+        assessment_id = next(iter(milestone_ids['assessment']))
+        implementation = milestones[implementation_id]
+        assessment = milestones[assessment_id]
+        if implementation.depends_on or assessment.depends_on != [implementation_id]:
+            raise Rejected('invalid_di_plan', 'Implementation must have no milestone prerequisites; '
+                           'independent assessment must depend on the implementation milestone')
     writer, assessor = envelope.get('writer'), envelope.get('assessor')
     if not writer or not assessor or writer == assessor:
         raise Rejected('invalid_di_plan', 'Distinct execution-envelope writer and assessor required')
@@ -232,11 +263,13 @@ def validate_execution_plan(plan, team, envelope) -> dict:
             or any(not isinstance(check, str) or not check.strip() for check in required + compatibility)):
         raise Rejected('invalid_di_plan', 'Execution-envelope required and compatibility checks must be explicit')
     checks = set(required + compatibility + ['independent-assessment'])
-    if implementation.verification != ['candidate-frozen']:
-        raise Rejected('invalid_di_plan', 'Implementation verification must be exactly candidate-frozen')
-    if set(assessment.verification) != checks:
-        raise Rejected('invalid_di_plan', 'Assessment verification must contain exactly the required checks, '
-                       'compatibility checks and independent-assessment: ' + ', '.join(sorted(checks)))
+    for task in parsed.tasks:
+        milestone = milestones[task.milestone]
+        if task.kind == 'implementation' and milestone.verification != ['candidate-frozen']:
+            raise Rejected('invalid_di_plan', 'Implementation verification must be exactly candidate-frozen')
+        if task.kind == 'assessment' and set(milestone.verification) != checks:
+            raise Rejected('invalid_di_plan', 'Assessment verification must contain exactly the required checks, '
+                           'compatibility checks and independent-assessment: ' + ', '.join(sorted(checks)))
     return validated
 
 
@@ -258,6 +291,9 @@ def approval_summary_html(plan: dict, envelope: dict) -> str:
              '<p>Ranges show low / base / high. Active agent effort and elapsed time are separate. '
              'Elapsed time includes the dependencies and waiting assumptions stated for each task. '
              'These forecasts do not grant additional execution capacity.</p>']
+    if parsed.execution_profile == 'serial-milestones-v1':
+        parts.append('<p>Serial checkpoints run in the listed task order. Each assessment runs all approved '
+                     'checks before the next implementation task; only the final assessment accepts delivery.</p>')
     for task in parsed.tasks:
         estimate = task.original_estimate
         parts.extend([

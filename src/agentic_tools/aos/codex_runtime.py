@@ -506,6 +506,9 @@ class CodexRuntime:
                     ('work_id', 'kind', 'concept_revision', 'concept_digest', 'contract_revision', 'scope',
                      'executor', 'requested_model', 'requested_effort')):
                 raise Rejected('runtime_identity', 'Only the exact saved sent assignment may launch')
+            if assignment['kind'] == 'implementation':
+                from .plan_runtime import implementation_baseline_in
+                implementation_baseline = implementation_baseline_in(db, assignment, contract)
         package = self._package(assignment)
         if package['execution_envelope'].get('runtime_recipe_digest') != digest(recipe):
             raise Rejected('runtime_recipe', 'Recipe differs from the exact approved execution envelope')
@@ -562,7 +565,7 @@ class CodexRuntime:
         if set(recipe.get('immutable', {})) & set(recipe.get('mutable', [])):
             raise Rejected('runtime_recipe', 'Immutable tests and mutable source must be disjoint')
         files = inventory(source, recipe=recipe, **deadline_args)
-        if assignment['kind'] == 'implementation' and digest(files) != contract['baseline']:
+        if assignment['kind'] == 'implementation' and digest(files) != implementation_baseline:
             raise Rejected('source_drift', 'Implementation source differs from the exact approved baseline')
         if any(files.get(path) != expected for path, expected in recipe.get('immutable', {}).items()):
             raise Rejected('source_drift', 'Immutable source/check hashes differ before launch')
@@ -871,6 +874,8 @@ class CodexRuntime:
         """Keep the approved correction/review and unused startup capacity available."""
         with self.lifecycle.store._connection() as db:
             run, contract = self.lifecycle._run(db, assignment['work_id'])
+            from .plan_runtime import remaining_jobs_in
+            following = remaining_jobs_in(db, assignment)
         repairs = contract.get('max_repairs')
         retries = contract.get('max_startup_retries', 0)
         cycle = run['cycle']
@@ -879,6 +884,7 @@ class CodexRuntime:
                 or type(retries) is not int or not 0 <= retries <= 2
                 or type(cycle) is not int or not 0 <= cycle <= repairs
                 or type(used) is not int or not 0 <= used <= retries
+                or type(following) is not int or following < 0
                 or assignment.get('kind') not in ('implementation', 'repair', 'assessment')):
             raise Rejected('runtime_capacity', 'Remaining correction/startup capacity is inconsistent')
         if checkout_boundary.reviewed_host(self.recipes[assignment['work_id']]):
@@ -888,9 +894,9 @@ class CodexRuntime:
                 if context['purpose'] == 'native_failure_triage':
                     if remaining < 1:
                         raise Rejected('runtime_capacity', 'Triage has no remaining correction allowance')
-                    return 2 + 3 * (remaining - 1) + retries - used
-            return int(assignment['kind'] != 'assessment') + 3 * remaining + retries - used
-        return int(assignment['kind'] != 'assessment') + 2 * (repairs - cycle) + retries - used
+                    return following + 2 + 3 * (remaining - 1) + retries - used
+            return following + 3 * remaining + retries - used
+        return following + 2 * (repairs - cycle) + retries - used
 
     def _checkout_before_start(self, recipe: dict, budget: dict, *, deadline: float | None = None) -> dict:
         observation = checkout_runtime.observe_resources(recipe, deadline=deadline if deadline is not None else time.monotonic()+20)
@@ -1962,9 +1968,15 @@ for index,item in enumerate(json.loads(sys.argv[13])):
                 resource_limits.prepare(db, assignment['work_id'], recipe)
                 files = inventory(Path(recipe['source']), recipe=recipe)
                 if checkout_boundary.enabled(recipe):
-                    expected = (repair_feedback['candidate'] if repair_feedback is not None else
-                                json.loads(assignment['candidate'])['identity'] if assignment['kind'] == 'assessment' else
-                                self._package(assignment)['execution_envelope']['baseline'])
+                    if repair_feedback is not None:
+                        expected = repair_feedback['candidate']
+                    elif assignment['kind'] == 'assessment':
+                        expected = json.loads(assignment['candidate'])['identity']
+                    else:
+                        from .plan_runtime import implementation_baseline_in
+                        with self.lifecycle.store._connection() as plan_db:
+                            _, contract = self.lifecycle._run(plan_db, assignment['work_id'])
+                            expected = implementation_baseline_in(plan_db, assignment, contract)
                     if digest(files) != expected:
                         raise Rejected('source_drift', 'Source changed after exact candidate admission and before reservation')
                     budgets.reserve(db, budget, recipe, following_jobs=self._checkout_following_jobs(assignment))
@@ -2098,12 +2110,16 @@ for index,item in enumerate(json.loads(sys.argv[13])):
             text = text.replace(recipe['outputs'], record['run_outputs'])
             text += '\nAttempt: ' + aid
             if self.lifecycle is not None:
-                from .plan_runtime import package_in
+                from .plan_runtime import package_in, task_in
                 with self.lifecycle.store._connection() as plan_db:
                     approved_plan = package_in(plan_db, assignment['work_id'])['di_plan']
-                text += ('\nAuthoritative approved DI plan (outputs, dependencies and definitions of done):\n'
-                         + canonical(approved_plan) + '\nPerform only tasks for this assignment phase; '
-                         'a repair assignment uses the implementation task within the confirmed findings and approved correction limits. '
+                    assigned_task = task_in(plan_db, assignment)
+                text += ('\nYour exact assigned DI task (outputs, dependencies and definition of done):\n'
+                         + canonical(assigned_task)
+                         + '\nAuthoritative approved DI plan (context for this assigned task):\n'
+                         + canonical(approved_plan) + '\nPerform only the exact assigned task above. '
+                         'Do not perform later tasks or advance later milestones. '
+                         'A repair assignment uses this same assigned implementation task within the confirmed findings and approved correction limits. '
                          'The host verifies the frozen-candidate milestone before independent assessment; '
                          'independent assessment must assess the task outputs and definitions of done.')
             if record.get('source_review_evidence') is not None:

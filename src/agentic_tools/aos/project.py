@@ -423,6 +423,9 @@ def _plan(project_path: Path, request_path: Path, packet: dict):
         max_repairs=bounds['max_repairs'], max_seconds=recipe['max_seconds'],
         max_startup_retries=bounds.get('max_startup_retries', 0),
         reviewed_host=checkout_boundary.reviewed_host(recipe),
+        planned_assignments=(len(request['concept']['di_plan']['tasks'])
+                             if request['concept']['di_plan'].get('execution_profile') == 'serial-milestones-v1'
+                             else 2),
         max_assignments=bounds['max_assignments'],
         lifecycle_assignments=_lifecycle_count(Path(config['state_dir']), request['concept']['work_id']))
     if not packet['finish_capacity']['ready']:

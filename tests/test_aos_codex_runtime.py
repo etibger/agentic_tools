@@ -134,7 +134,8 @@ def prepared(tmp_path, monkeypatch):
     outputs.mkdir()
     (source / 'example.py').write_text('def add(a,b):\n return a-b\n')
     (source / 'test_example.py').write_text('from example import add\ndef test_add():\n assert add(2,3)==5\n')
-    recipe = {'source': str(source), 'outputs': str(outputs), 'read_roots': [str(Path(sys.base_prefix).resolve())],
+    recipe = {'source': str(source), 'outputs': str(outputs),
+              'read_roots': list(dict.fromkeys([str(Path(sys.base_prefix).resolve()), str(Path(sys.prefix).resolve())])),
               'max_seconds': 60, 'requires_detached_processes': False,
               'mutable': ['example.py'], 'immutable': {'test_example.py': inventory(source)['test_example.py']},
               'implementation_prompt': 'Fix add; only example.py is writable. No detached processes.',
