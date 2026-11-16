@@ -138,8 +138,11 @@ source revision. One supported choice is `isolated-checkout-v1` with
 `reviewed-host-v1` validation and `host-owned-v1` native ownership. It requires
 separate private state/readiness/output paths, an external qualified interpreter,
 explicit matching writer/assessor settings, typed checks, sufficient retained
-capacity, an exact two-task DI plan and an available qualified HTTPS decision
-service. Preparation and metadata readiness confer no implementation approval.
+capacity and an exact supported DI plan. The original attended route uses two
+tasks; the separately qualified serial milestone profile below exercises four
+tasks and one corrective cycle. Use either the qualified HTTPS decision service
+or the explicitly qualified delegated-host route for the exact decision.
+Preparation and metadata readiness confer no implementation approval.
 
 For a managed checkout under `.codex`, select the candidate source explicitly
 with `PYTHONPATH` and use the existing project Python outside the protected
@@ -157,10 +160,13 @@ attest its own prose as a human instruction. Synthetic API tests qualify the
 contract only; automatic desktop capture and ownership transfer remain
 unsupported. Missing trustworthy host ingestion holds enrolled work.
 
-Keep the human present for the exact decision page and verify its durable saved
-answer. Display, browser automation and test fixture answers are separate facts.
-Neither a synthetic decision nor an unavailable decision service passes that
-gate. Check approval and instruction authority again before resource reservation.
+For an attended HTTPS decision, keep the human present and verify the durable
+saved answer. Display, browser automation and test fixture answers are separate
+facts. A prior human delegation instead requires a separately qualified trusted
+host that preserves the original grant, records the distinct authorized relay
+and exact derived answer, and supports independent saved-decision readback.
+Neither a synthetic answer nor an unavailable decision service qualifies that
+route. Check current approval and instruction authority before reservation.
 
 The fresh route's production review/native-check gates require the exact frozen
 candidate. The retained assessment-evidence preclaim barrier also exists, but
@@ -182,3 +188,21 @@ Settings rebind, SSH/VM ownership, closed-attempt recovery and unattended chat
 continuation are separate route choices. If selected, qualify their actual
 consumers and final expanded inputs before scarce readiness. Leaving them out
 of a fresh route does not close their existing issues or erase failed history.
+
+## Serial milestone qualification on 16 November 2026
+
+The supported serial profile was checked at `b1765bd6a0fe908e1364bc0bf207394ab33836f3`. It adds detailed DI tasks, dependencies, acceptance evidence, internal milestone gates and estimates to the existing isolated-checkout reviewed-host route. Its 707 regression tests and strict documentation build passed; four independent native evidence checks are separate evidence, not an addition to that regression count.
+
+An independent full-workflow qualification used the production Worker, lifecycle, recipe, resource, owned-native-command, adapter and dependency consumers with scripted model/stdio/authority and a substituted model sandbox canary. It used the original native-tests-v1/unittest oracles. The corrected graph reached delivery after native rejection, independent triage, repair, a fresh checkpoint, packaging and final acceptance. Eight separate damaged/stale-evidence cases blocked dependent runtime admission. Two harness failures and the expected old-source failure remain retained. This is native/data-flow qualification, not a genuine model turn or a new permission-readiness result.
+
+A genuine seven-assignment model rehearsal then reached delivery through the same production path, including native rejection of a disclosed defect, independent failure triage, one correction, a fresh passing milestone, packaging and independent final acceptance. The packaging and final workers each consumed the verified prerequisite artifacts; original command traces demonstrate their actual reads and content verification. The fresh milestone and final checks each passed all 9 summary and 6 CLI tests with no failures, errors or skips. Across the three native pairs there were 45 assertion observations: 40 passes and 5 expected initial failures, not 45 unique tests or an entirely passing history.
+
+The trial used exactly seven model calls and 8,400 reserved seconds, with one correction and no startup retry. Recorded assignment wall time was 748.529158 seconds. Known model usage was 1,792,343 input and 45,524 output tokens; billing and total engineering effort remain unknown. The first writer's empty-rollout observation recovered on its original turn through the existing metadata wait, without another model call. Independent final review verified exact source and dependency evidence, released resources and positive cleanup of recorded owners while preserving an unrelated service. Process observations establish the recorded ownership boundary, not the absence of every possible transient or unrecorded process.
+
+The delegated decision used a separately reviewed, case-specific trusted host. It preserved the original human grant and recorded a distinct `authorized_relay`, an exact derived answer, current owner and concept, and independent saved-decision readback. It did not label model prose or browser automation as a direct human instruction. This qualifies that bound host route; it does not implement automatic desktop capture, general ownership transfer or arbitrary unattended approvals.
+
+Six earlier rehearsal failures remain retained, with 26 actual model calls and 25,080 reserved seconds charged. Their causes included missing reassessment/dependency context, an acknowledged first-status read rejection, a coordinator fixture that incorrectly made editable source read-only, and rejection of legitimate native raw logs at the next task's dependency gate. The repaired consumer verifies the exact historical producer, review, check, candidate, journal and cleanup at the original capture locations. It grants no worker access to state. Earlier files, filesystem metadata and unused allowances remain unchanged; a new case does not replenish an old budget.
+
+Before spending another live-model allowance, exercise the complete artifact producer-to-consumer graph with the selected adapter and actual immutable test oracles. Inspect the packaging and final workers' actual supplied evidence. Narrow mocks or a passing intermediate milestone do not establish the later boundary.
+
+The initial acknowledged status-read repair has deterministic and scripted-peer coverage. Attribute any actual use only when its retained retry event is present; an empty-rollout metadata wait is a separate existing path. Optional cold read-only replay of an earlier actual case remains unqualified where control construction was refused; no historical ledger was reopened or migrated. Host/container/database effects, new permission recipes, service restart/import acceptance, other hosts and idle-chat wake-up remain separately qualified product obligations.
