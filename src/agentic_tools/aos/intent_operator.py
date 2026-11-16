@@ -98,7 +98,7 @@ class IntentController:
             return self.sessions.get(token)
 
     def fresh_work_in(self, db, current):
-        """Recognize only original registration, never reconstruct missing history."""
+        """Recognize untouched work; approval and first intent may arrive in either order."""
         if (current != human_intent.current_in(db, self.work_id)
                 or current.get('policy') != human_intent.POLICY or current.get('disposition') != 'ambiguous'
                 or current.get('controlling_instruction') is not None
@@ -113,12 +113,24 @@ class IntentController:
             return False
         # Retain even completed/recovered input rows and released resources.
         if any(db.execute('SELECT 1 FROM ' + table + ' WHERE work_id=? LIMIT 1', (self.work_id,)).fetchone()
-               for table in ('human_operator_input', 'assignment', 'resource', 'owned_stop', 'decision')):
+               for table in ('human_operator_input', 'assignment', 'resource', 'owned_stop')):
+            return False
+        if (self.store._work(db, self.work_id)['current_concept'] != contract['concept_revision']
+                or db.execute("""SELECT 1 FROM decision WHERE work_id=? AND
+                    (outcome<>'approved' OR concept_revision<>? OR digest<>?) LIMIT 1""",
+                    (self.work_id, contract['concept_revision'], contract['concept_digest'])).fetchone()):
             return False
         events = db.execute('SELECT kind,detail FROM lifecycle_event WHERE work_id=? ORDER BY event_id',
                             (self.work_id,)).fetchall()
-        return (len(events) == 1 and events[0]['kind'] == 'contract_registered'
-                and json.loads(events[0]['detail']) == contract)
+        if (not events or events[0]['kind'] != 'contract_registered'
+                or json.loads(events[0]['detail']) != contract):
+            return False
+        # Native rejected admission records these diagnostics before any effect.
+        # They stay retained; unknown diagnostics and all other events deny Begin.
+        missing_intent = 'Human intent fences execution: ambiguous'
+        missing_approval = 'Current exact concept approval and verified decision readback required'
+        return all(event['kind'] == 'admission_held' and json.loads(event['detail']) in
+                   ([missing_intent], [missing_intent, missing_approval]) for event in events[1:])
 
     def can_begin(self, current):
         with self.store._connection() as db:

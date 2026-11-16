@@ -17,7 +17,9 @@ from agentic_tools.aos import human_intent
 from agentic_tools.aos.intent_operator import IntentService
 from agentic_tools.aos.lifecycle import Lifecycle
 from agentic_tools.aos.store import Rejected, Store
-from test_aos_lifecycle import approve, setup
+from di_plan_fixture import synthetic_plan
+from test_aos_lifecycle import approve, contract as execution_contract, setup
+from test_aos_store import TEAM
 
 
 @pytest.fixture
@@ -31,7 +33,23 @@ def fresh_fixture(tmp_path):
 
 
 def https_fixture(tmp_path, *, approved=True, **contract):
-    store, lifecycle, _ = setup(tmp_path, admitted=False, approved=approved, **contract)
+    if contract:
+        # Native admission tests need the same policy in package and contract.
+        store = Store(tmp_path / 'state', (tmp_path / 'fixture',))
+        store.introduce('intro-Q1', 'Q1', 'Synthetic common lifecycle', ['fixture/'], TEAM)
+        bounds = execution_contract({'digest': 'not-self-referential'}, **contract)
+        bounds.pop('concept_digest')
+        bounds.pop('concept_revision')
+        team = [{**TEAM[0], 'name': person, 'role': role, 'scope': 'Synthetic fixture; bounded checks'}
+                for person, role in [('writer', 'Implementer'), ('assessor', 'Independent assessor')]]
+        current = store.present('present-Q1', 'Q1', 1, 'Q1-DI', 1, 'Synthetic fixture', ['Synthetic acceptance'],
+                                team, bounds['authority'], execution_envelope=bounds, di_plan=synthetic_plan(bounds))
+        lifecycle = Lifecycle(store)
+        lifecycle.register('register-Q1', 'Q1', {**bounds, 'concept_revision': 1, 'concept_digest': current['digest']})
+        if approved:
+            approve(store, current)
+    else:
+        store, lifecycle, _ = setup(tmp_path, admitted=False, approved=approved)
     setup(tmp_path, store=store, work_id='OTHER', admitted=False)
     key, cert = store.directory / 'tls.key', store.directory / 'tls.crt'
     subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
@@ -130,9 +148,6 @@ def original_instruction(lifecycle, instruction_id, action='stop', *, scope=None
 def unsafe_fresh_evidence(lifecycle, kind):
     """Reconstructed unsafe fixtures; SQL labels are not actual execution proof."""
     store = lifecycle.store
-    if kind == 'decision':
-        approve(store, store.read('Q1')['concepts'][-1])
-        return
     with store._transaction() as db:
         if kind in {'pending_input', 'recovered_input', 'completed_input'}:
             result = {'interrupted': True, 'instruction_retained': False} if kind == 'recovered_input' else {'message': 'retained original receipt'}
@@ -217,10 +232,184 @@ def test_fresh_begin_yes_no_records_first_original_without_approval_or_execution
     assert store.read('OTHER')['decisions'] == other['decisions']
 
 
+def retained_authority_rows(store):
+    """Compare exact stored approval and diagnostic bytes, not derived labels."""
+    with store._connection() as db:
+        return {table: [tuple(row) for row in db.execute(query)] for table, query in {
+            'decision': "SELECT * FROM decision WHERE work_id='Q1' ORDER BY decision_id",
+            'readback': "SELECT r.* FROM decision_readback r JOIN decision d ON r.decision_id=d.decision_id WHERE d.work_id='Q1' ORDER BY r.decision_id",
+            'event': "SELECT * FROM lifecycle_event WHERE work_id='Q1' ORDER BY event_id",
+            'blocker': "SELECT * FROM technical_blocker WHERE work_id='Q1' ORDER BY code",
+            'operation': 'SELECT * FROM operation ORDER BY operation_id',
+        }.items()}
+
+
+@pytest.mark.parametrize('ordering', ['begin-first', 'approval-first', 'approval-after-form'])
+@pytest.mark.parametrize('rejected_admissions', [False, True])
+def test_first_input_order_is_independent_of_saved_approval_and_real_admission_diagnostics(fresh_fixture, ordering, rejected_admissions):
+    store, _, _ = fresh_fixture
+    with running(fresh_fixture) as (browser, lifecycle):
+        concept = store.read('Q1')['concepts'][-1]
+        if ordering == 'approval-first':
+            approve(store, concept)
+        if rejected_admissions:
+            for index in range(2):
+                held = lifecycle.admit('synthetic-pre-input-hold-' + str(index), 'Q1')
+                expected = ['Human intent fences execution: ambiguous']
+                if ordering != 'approval-first':
+                    expected.append('Current exact concept approval and verified decision readback required')
+                assert held['execution'] == 'held' and held['blockers'] == expected
+            with store._connection() as db:
+                assert [json.loads(row[0]) for row in db.execute("SELECT detail FROM lifecycle_event WHERE kind='admission_held' AND work_id='Q1'")] == [expected, expected]
+        page = browser.request()[1]
+        fields = confirmation_fields(page, choice='begin')
+        if ordering == 'approval-after-form':
+            approve(store, concept)
+        # Approval/diagnostic writes are not changes to original human intent.
+        original = retained_authority_rows(store)
+        assert 'No begin instruction was submitted.' in browser.request('GET', '/?begin=no')[1]
+        assert retained_authority_rows(store) == original
+        assert 'Your instruction to begin is saved.' in browser.submit(fields)
+        after = retained_authority_rows(store)
+        for table in ('decision', 'readback', 'blocker'):
+            assert after[table] == original[table]
+        assert after['event'][:len(original['event'])] == original['event']
+        assert all(row in after['operation'] for row in original['operation'])
+        record = store.read('Q1')
+        assert record['execution'] == 'held' and record['lifecycle']['assignments'] == record['lifecycle']['resources'] == []
+        if ordering == 'begin-first':
+            assert record['decisions'] == []
+            # Existing admission still rejects missing approval after Begin.
+            assert lifecycle.admit('synthetic-no-approval', 'Q1')['blockers'] == ['Current exact concept approval and verified decision readback required']
+            approve(store, concept)
+        decision = store.read('Q1')['decisions']
+        assert len(decision) == 1 and decision[0]['outcome'] == 'approved'
+        # Explicit synthetic admission remains separate; no runtime is started.
+        admitted = lifecycle.admit('synthetic-after-both', 'Q1')
+        assert admitted['execution'] == 'eligible'
+        assert store.read('Q1')['decisions'] == decision
+        assert len(store.read('Q1')['lifecycle']['assignments']) == 1
+
+
+@pytest.mark.parametrize('approved', [False, True])
+def test_native_pre_input_admission_hold_after_begin_render_is_safe_to_retain(fresh_fixture, approved):
+    store, _, _ = fresh_fixture
+    with running(fresh_fixture) as (browser, lifecycle):
+        if approved:
+            approve(store, store.read('Q1')['concepts'][-1])
+        fields = confirmation_fields(browser.request()[1], choice='begin')
+        intent = lifecycle.snapshot('Q1')['human_intent']
+        held = lifecycle.admit('synthetic-racing-rejected-admission', 'Q1')
+        assert held['execution'] == 'held' and 'Human intent fences execution: ambiguous' in held['blockers']
+        assert lifecycle.snapshot('Q1')['human_intent'] == intent
+        prior = retained_authority_rows(store)
+        browser.submit(fields)
+        after = retained_authority_rows(store)
+        for table in ('decision', 'readback', 'blocker'):
+            assert after[table] == prior[table]
+        assert after['event'][:len(prior['event'])] == prior['event']
+        assert lifecycle.snapshot('Q1')['human_intent']['controlling_instruction'] == fields['input_id']
+        assert store.read('Q1')['execution'] == 'held'
+        assert store.read('Q1')['lifecycle']['assignments'] == store.read('Q1')['lifecycle']['resources'] == []
+
+
+@pytest.mark.parametrize('action', ['stop', 'pause'])
+@pytest.mark.parametrize('scope', [['Q1'], ['*']])
+def test_approval_and_saved_diagnostics_never_allow_begin_past_a_later_stop_or_pause(fresh_fixture, action, scope):
+    store, _, _ = fresh_fixture
+    with running(fresh_fixture) as (browser, lifecycle):
+        approve(store, store.read('Q1')['concepts'][-1])
+        assert lifecycle.admit('synthetic-approved-missing-input', 'Q1')['blockers'] == ['Human intent fences execution: ambiguous']
+        fields = confirmation_fields(browser.request()[1], choice='begin')
+        original_instruction(lifecycle, 'later-human-hold', action=action, scope=scope)
+        prior = retained_authority_rows(store)
+        browser.submit(fields, expected=409)
+        assert retained_authority_rows(store) == prior
+        current = lifecycle.snapshot('Q1')['human_intent']
+        assert current['disposition'] == action and current['controlling_instruction'] == 'later-human-hold'
+        assert 'instruction to begin is saved' not in browser.submit(fields)
+        assert lifecycle.snapshot('Q1')['human_intent'] == current
+        assert '<h2>Begin this work?</h2>' not in browser.request()[1]
+        assert store.read('Q1')['lifecycle']['assignments'] == store.read('Q1')['lifecycle']['resources'] == []
+
+
+@pytest.mark.parametrize('detail', [[], ['Current exact concept approval and verified decision readback required'],
+                                  ['Human intent fences execution: stop'], ['Human intent fences execution: ambiguous extra'],
+                                  ['Human intent fences execution: ambiguous', 'Unresolved technical blocker'],
+                                  ['Human intent fences execution: ambiguous', 'Human intent fences execution: ambiguous'],
+                                  'Human intent fences execution: ambiguous', {'blockers': ['Human intent fences execution: ambiguous']}])
+def test_unknown_or_malformed_admission_history_blocks_begin_at_render_and_submit(fresh_fixture, detail):
+    store, _, _ = fresh_fixture
+    with running(fresh_fixture) as (browser, lifecycle):
+        fields = confirmation_fields(browser.request()[1], choice='begin')
+        # Deliberate invalid retained-evidence fixtures, not native admission proof.
+        with store._transaction() as db:
+            lifecycle._touch(db, 'Q1', 'admission_held', detail)
+        prior = retained_authority_rows(store)
+        assert '<form' not in browser.request()[1]
+        browser.submit(fields, expected=409)
+        assert retained_authority_rows(store) == prior
+        assert lifecycle.snapshot('Q1')['human_intent']['history'] == []
+        with store._connection() as db:
+            assert not db.execute('SELECT 1 FROM human_operator_input WHERE input_id=?', (fields['input_id'],)).fetchone()
+
+
+@pytest.mark.parametrize('answer', ['decline', 'cancel', 'unavailable'])
+def test_nonapproved_decision_stays_status_only_and_cannot_use_old_begin_form(fresh_fixture, answer):
+    store, _, _ = fresh_fixture
+    with running(fresh_fixture) as (browser, lifecycle):
+        fields = confirmation_fields(browser.request()[1], choice='begin')
+        capability = store.host_capability('SIMULATED decision', 'SIMULATED exact answer')
+        challenge = store.begin_approval('synthetic-nonapproval', 'Q1', store.read('Q1')['revision'],
+                                         store.read('Q1')['concepts'][-1]['digest'], capability=capability)
+        store.finish_approval(challenge['challenge_id'], answer, None, capability=capability)
+        prior = retained_authority_rows(store)
+        assert '<form' not in browser.request()[1]
+        browser.submit(fields, expected=409)
+        assert retained_authority_rows(store) == prior
+        assert lifecycle.snapshot('Q1')['human_intent']['history'] == []
+
+
+def test_begin_does_not_verify_or_repair_a_saved_approval_readback_failure(fresh_fixture, monkeypatch):
+    store, _, _ = fresh_fixture
+    with running(fresh_fixture) as (browser, lifecycle):
+        def fail_readback(stage):
+            if stage == 'decision_readback':
+                raise ValueError('SIMULATED unavailable readback')
+        monkeypatch.setattr(store, '_fault', fail_readback)
+        with pytest.raises(Rejected, match='decision_readback_failed'):
+            approve(store, store.read('Q1')['concepts'][-1])
+        prior = retained_authority_rows(store)
+        assert prior['decision'] and prior['readback'][0][1] == 'blocked'
+        browser.submit(confirmation_fields(browser.request()[1], choice='begin'))
+        after = retained_authority_rows(store)
+        assert after['decision'] == prior['decision'] and after['readback'] == prior['readback']
+        assert 'Current exact concept approval and verified decision readback required' in lifecycle.admit('synthetic-failed-readback', 'Q1')['blockers']
+        assert store.read('Q1')['execution'] == 'held'
+        assert store.read('Q1')['lifecycle']['assignments'] == store.read('Q1')['lifecycle']['resources'] == []
+
+
+def test_a_new_concept_cannot_reuse_the_original_registered_begin_view(fresh_fixture):
+    store, _, _ = fresh_fixture
+    with running(fresh_fixture) as (browser, lifecycle):
+        original = store.read('Q1')['concepts'][-1]
+        approve(store, original)
+        fields = confirmation_fields(browser.request()[1], choice='begin')
+        package = original['package']
+        store.present('synthetic-new-concept', 'Q1', store.read('Q1')['revision'], 'Q1-DI', 2,
+                      'Changed synthetic concept', ['Synthetic acceptance'], package['team_envelope'], package['authority'],
+                      execution_envelope=package['execution_envelope'], di_plan=package['di_plan'])
+        prior = retained_authority_rows(store)
+        assert '<form' not in browser.request()[1]
+        browser.submit(fields, expected=409)
+        assert retained_authority_rows(store) == prior
+        assert lifecycle.snapshot('Q1')['human_intent']['history'] == []
+
+
 @pytest.mark.parametrize('kind', ['pending_input', 'recovered_input', 'completed_input', 'paused', 'active', 'eligible',
                                  'cancelled', 'delivered', 'retired', 'admitted', 'cycle', 'control', 'candidate',
                                  'delivery', 'resume_execution', 'owner', 'contract_policy', 'assignment', 'resource',
-                                 'owned_stop', 'event', 'decision'])
+                                 'owned_stop', 'event'])
 def test_begin_is_absent_for_retained_input_or_prior_effects(fresh_fixture, kind):
     store, _, _ = fresh_fixture
     with running(fresh_fixture) as (browser, lifecycle):
@@ -232,7 +421,7 @@ def test_begin_is_absent_for_retained_input_or_prior_effects(fresh_fixture, kind
         assert store.read('Q1')['lifecycle']['human_intent'] == before['lifecycle']['human_intent']
 
 
-@pytest.mark.parametrize('kind', ['pending_input', 'recovered_input', 'resource', 'event', 'decision'])
+@pytest.mark.parametrize('kind', ['pending_input', 'recovered_input', 'resource', 'event'])
 def test_begin_rechecks_freshness_after_render_before_inserting_original_input(fresh_fixture, kind):
     store, _, _ = fresh_fixture
     with running(fresh_fixture) as (browser, lifecycle):
