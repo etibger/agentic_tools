@@ -21,8 +21,8 @@ from test_aos_lifecycle import setup
 
 
 @pytest.fixture
-def fixture(tmp_path):
-    store, lifecycle, _ = setup(tmp_path, admitted=False)
+def fixture(tmp_path, request):
+    store, lifecycle, _ = setup(tmp_path, admitted=False, approved=getattr(request, 'param', True))
     setup(tmp_path, store=store, work_id='OTHER', admitted=False)
     key, cert = store.directory / 'tls.key', store.directory / 'tls.crt'
     subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
@@ -65,10 +65,20 @@ class Browser:
         assert self.request('POST', '/unlock', {'operator_key': key.read_text().strip()}, **headers)[0] == 200
 
     def form(self, **changes):
+        """Synthetic maintenance input, including actions absent from normal UI."""
         status, body = self.request()
         assert status == 200
         fields = {name: unescape(value) for name, value in re.findall(r'<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"', body)}
-        fields['supersedes'] = unescape(re.search(r'<textarea name="supersedes">(.*?)</textarea>', body, re.S).group(1))
+        if not fields:
+            controller = self.service.controller
+            csrf = controller.csrf(self.cookie.split('=', 1)[1])
+            assert csrf  # Trusted synthetic seam; never a deployed human action.
+            current = controller.status()
+            with controller.store._connection() as db:
+                owner = json.loads(db.execute('SELECT contract FROM lifecycle WHERE work_id=?', (controller.work_id,)).fetchone()[0])['receiving_owner']
+            fields = {'csrf': csrf, 'input_id': controller.issue_form(csrf, current), 'owner': current.get('owner', owner),
+                      'reference': current.get('controlling_instruction') or '',
+                      'supersedes': ' '.join(current.get('current_heads', []) + [r['conflict_id'] for r in current.get('conflicts', [])])}
         return {**fields, 'action': 'resume', **changes}
 
     def submit(self, fields, expected=200, **headers):
@@ -85,6 +95,167 @@ def running(fixture):
         browser.login(options['operator_key'])
         yield browser, lifecycle
     assert service.cleanup == {'listener_stopped': True, 'requests_stopped': True}
+
+
+def confirmation_fields(page, action='resume'):
+    """Use only the actual public form, with no synthetic maintenance seam."""
+    inputs = re.findall(r'<input\b([^>]*)>', page)
+    assert len(inputs) == 6 and all('type="hidden"' in item for item in inputs)
+    fields = {name: unescape(value) for name, value in re.findall(r'<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"', page)}
+    assert set(fields) == {'csrf', 'input_id', 'action', 'owner', 'reference', 'supersedes'}
+    assert fields['action'] == action and '<textarea' not in page
+    assert '<button>Yes</button>' in page and page.index('</form>') < page.index('href="/?' + action + '=no"')
+    return fields
+
+
+@pytest.mark.parametrize('action', ['stop', 'pause'])
+@pytest.mark.parametrize('title,question', [('Disposable AOS qualification work', 'Resume the disposable AOS qualification work?'),
+                                          ('A different project', 'Resume this work?')])
+def test_contextual_yes_no_carries_exact_metadata_and_no_is_read_only(fixture, action, title, question):
+    store, _, _ = fixture
+    with store._transaction() as db:
+        db.execute("UPDATE work SET title=? WHERE work_id='Q1'", (title,))
+    other = store.read('OTHER')
+    with running(fixture) as (browser, lifecycle):
+        browser.submit(browser.form(action='enroll'))
+        browser.submit(browser.form(action=action))
+        before = store.read('Q1')
+        status, page = browser.request()
+        assert status == 200 and '<h1>' + title + '</h1>' in page and question in page
+        assert 'Status: <strong>' + action.capitalize() + ' instruction in effect</strong>' in page
+        fields = confirmation_fields(page)
+        current = before['lifecycle']['human_intent']
+        assert fields['owner'] == current['owner'] and fields['reference'] == current['controlling_instruction']
+        assert fields['supersedes'].split() == current['current_heads']
+        visible = re.sub(r'<input[^>]*>', '', page.split('<details>', 1)[0])
+        assert current['controlling_instruction'] not in visible and current['owner'] not in visible
+        assert 'Enable controls' not in visible and 'Replay original' not in visible and 'Check same-owner' not in visible
+        with store._connection() as db:
+            count = db.execute('SELECT count(*) FROM human_operator_input').fetchone()[0]
+        status, declined = browser.request('GET', '/?resume=no')
+        assert status == 200 and 'No resume instruction was submitted.' in declined and '<form' not in declined
+        assert store.read('Q1')['revision'] == before['revision']
+        assert lifecycle.snapshot('Q1')['human_intent'] == current
+        with store._connection() as db:
+            assert db.execute('SELECT count(*) FROM human_operator_input').fetchone()[0] == count
+        result = browser.submit(fields, Origin='null')
+        assert 'Your resume instruction is saved.' in result and '<details><summary>Technical evidence</summary>' in result
+        after = store.read('Q1')
+        assert after['lifecycle']['human_intent']['controlling_instruction'] == fields['input_id']
+        assert after['lifecycle']['human_intent']['owner'] == current['owner']
+        assert after['decisions'] == before['decisions']
+        browser.submit(fields)  # Lost response retry remains the original instruction.
+        assert store.read('Q1')['revision'] == after['revision']
+    assert store.read('OTHER')['revision'] == other['revision']
+    assert store.read('OTHER')['decisions'] == other['decisions']
+
+
+def test_contextual_yes_cannot_bypass_newer_stop_and_retains_rejected_attempt(fixture):
+    store, _, _ = fixture
+    with running(fixture) as (browser, lifecycle):
+        browser.submit(browser.form(action='enroll'))
+        browser.submit(browser.form(action='stop'))
+        fields = confirmation_fields(browser.request()[1])
+        newer_stop = browser.form(action='stop')
+        browser.submit(newer_stop)
+        before = lifecycle.snapshot('Q1')['human_intent']
+        browser.submit(fields, expected=409)
+        assert lifecycle.snapshot('Q1')['human_intent'] == before
+        assert before['controlling_instruction'] == newer_stop['input_id'] and before['disposition'] == 'stop'
+        with store._connection() as db:
+            assert db.execute('SELECT 1 FROM human_instruction WHERE instruction_id=?', (fields['input_id'],)).fetchone() is None
+            assert db.execute('SELECT 1 FROM human_operator_input WHERE input_id=?', (fields['input_id'],)).fetchone()
+        browser.submit(fields)  # Read back the uncertain attempt; never repeat its effect.
+        assert lifecycle.snapshot('Q1')['human_intent'] == before
+
+
+def test_running_contextual_stop_remains_accessible_and_stale_stop_cannot_override_resume(fixture):
+    store, _, _ = fixture
+    with running(fixture) as (browser, lifecycle):
+        browser.submit(browser.form(action='enroll'))
+        browser.submit(browser.form(action='resume'))
+        before = store.read('Q1')
+        page = browser.request()[1]
+        assert '<h2>Stop this work?</h2>' in page
+        stale_stop = confirmation_fields(page, 'stop')
+        assert stale_stop['owner'] == before['lifecycle']['human_intent']['owner']
+        assert stale_stop['supersedes'].split() == before['lifecycle']['human_intent']['current_heads']
+        with store._connection() as db:
+            count = db.execute('SELECT count(*) FROM human_operator_input').fetchone()[0]
+        assert 'No stop instruction was submitted.' in browser.request('GET', '/?stop=no')[1]
+        assert store.read('Q1')['revision'] == before['revision']
+        with store._connection() as db:
+            assert db.execute('SELECT count(*) FROM human_operator_input').fetchone()[0] == count
+        stopped = confirmation_fields(browser.request()[1], 'stop')
+        assert 'Your stop instruction is saved.' in browser.submit(stopped)
+        assert lifecycle.snapshot('Q1')['human_intent']['controlling_instruction'] == stopped['input_id']
+        resumed = confirmation_fields(browser.request()[1])
+        browser.submit(resumed)
+        browser.submit(stale_stop, expected=409)
+        assert lifecycle.snapshot('Q1')['human_intent']['controlling_instruction'] == resumed['input_id']
+        assert lifecycle.snapshot('Q1')['human_intent']['owner'] == stale_stop['owner']
+        browser.submit(confirmation_fields(browser.request()[1], 'stop'))
+        assert lifecycle.snapshot('Q1')['human_intent']['disposition'] == 'stop'
+        assert store.read('Q1')['decisions'] == before['decisions']
+
+
+@pytest.mark.parametrize('changes', [{'owner': 'different-responsibility'}, {'work_id': 'OTHER'}, {'csrf': 'wrong'}])
+def test_contextual_resume_preserves_owner_scope_and_csrf_checks(fixture, changes):
+    with running(fixture) as (browser, lifecycle):
+        browser.submit(browser.form(action='enroll'))
+        browser.submit(browser.form(action='stop'))
+        before = lifecycle.snapshot('Q1')['human_intent']
+        fields = confirmation_fields(browser.request()[1])
+        browser.submit({**fields, **changes}, expected=409)
+        assert lifecycle.snapshot('Q1')['human_intent'] == before
+
+
+def test_stop_instruction_label_does_not_claim_runtime_cleanup(fixture):
+    with running(fixture) as (browser, lifecycle):
+        browser.submit(browser.form(action='enroll'))
+        browser.submit(browser.form(action='stop'))
+        # Synthetic presentation fixture: saved Stop before runtime reconciliation.
+        with lifecycle.store._transaction() as db:
+            db.execute("UPDATE lifecycle SET execution='active' WHERE work_id='Q1'")
+        page = browser.request()[1]
+        assert 'Status: <strong>Stop instruction in effect</strong>' in page
+        assert '<strong>Stopped</strong>' not in page and 'execution' in page and 'active' in page
+
+
+@pytest.mark.parametrize('state', ['unenrolled', 'ambiguous', 'conflicting', 'cancelled', 'delivered', 'retired'])
+def test_contextual_page_is_status_only_without_safe_resume_choice(fixture, state):
+    with running(fixture) as (browser, lifecycle):
+        if state != 'unenrolled':
+            browser.submit(browser.form(action='enroll'))
+        if state in {'conflicting', 'cancelled', 'delivered', 'retired'}:
+            browser.submit(browser.form(action='stop'))
+        if state == 'conflicting':
+            browser.submit(browser.form(action='resume', supersedes=''))
+        if state in {'cancelled', 'delivered', 'retired'}:
+            # Disposable presentation fixtures only; not a terminal execution proof.
+            with lifecycle.store._transaction() as db:
+                db.execute("UPDATE lifecycle SET execution=? WHERE work_id='Q1'", (state,))
+        before = lifecycle.snapshot('Q1')['human_intent']
+        for route in ('/', '/?resume=no'):
+            status, page = browser.request('GET', route)
+            assert status == 200 and '<form' not in page and '<button' not in page and '<textarea' not in page
+            assert lifecycle.snapshot('Q1')['human_intent'] == before
+
+
+@pytest.mark.parametrize('fixture', [False], indirect=True)
+def test_contextual_yes_saves_resume_but_keeps_missing_approval_hold(fixture):
+    store, _, _ = fixture
+    with running(fixture) as (browser, lifecycle):
+        browser.submit(browser.form(action='enroll'))
+        browser.submit(browser.form(action='stop'))
+        page = browser.submit(confirmation_fields(browser.request()[1]))
+        assert 'Separate approval and other checks still apply.' in page
+        record = store.read('Q1')
+        assert record['lifecycle']['human_intent']['disposition'] == 'running'
+        assert record['execution'] == 'paused' and record['decisions'] == []
+        with store._connection() as db:
+            assert db.execute("SELECT count(*) FROM assignment WHERE work_id='Q1'").fetchone()[0] == 0
+            assert db.execute("SELECT count(*) FROM resource WHERE work_id='Q1'").fetchone()[0] == 0
 
 
 def test_selected_https_stop_resume_replay_later_stop_and_unrelated_preservation(fixture):
@@ -494,6 +665,12 @@ def test_actual_cli_process_serves_operator_controls_and_closes_listener(fixture
     import signal
     from types import SimpleNamespace
     store, lifecycle, options = fixture
+    capability = store.host_capability('SIMULATED CLI setup', 'SIMULATED original stopped fixture')
+    human_intent.enable(lifecycle, 'Q1', 'fixture-owner', capability=capability)
+    human_intent.record(lifecycle, {'instruction_id': 'synthetic-cli-stop', 'human_reference': 'SIMULATED:cli-stop',
+        'source_kind': 'direct_human', 'scope': ['Q1'], 'action': 'stop', 'supersedes': [],
+        'provenance_available': True, 'context': 'original'}, capability=capability)
+    lifecycle.control('synthetic-cli-pause', 'Q1', 'pause', instruction_id='synthetic-cli-stop')
     argv = [sys.executable, '-m', 'agentic_tools.aos.cli', 'intent-serve', '--state-dir', str(store.directory),
             '--worker-writable-root', str(store.worker_writable_roots[0])]
     for name, value in options.items():
@@ -506,14 +683,12 @@ def test_actual_cli_process_serves_operator_controls_and_closes_listener(fixture
         assert url == f"https://127.0.0.1:{options['port']}/"
         browser = Browser(SimpleNamespace(port=options['port'], origin=url.rstrip('/')))
         browser.login(options['operator_key'])
-        browser.submit(browser.form(action='enroll'))
-        stopped = browser.form(action='stop')
-        browser.submit(stopped)
+        assert browser.request('GET', '/?resume=no')[0] == 200
+        assert lifecycle.snapshot('Q1')['human_intent']['disposition'] == 'stop'
         resumed = browser.form(action='resume')
         browser.submit(resumed)
-        browser.submit(browser.form(action='replay', reference=stopped['input_id']))
+        browser.submit(resumed)  # Same original input identity; no duplicate instruction.
         assert lifecycle.snapshot('Q1')['human_intent']['controlling_instruction'] == resumed['input_id']
-        browser.submit(browser.form(action='handoff'))
     finally:
         child.send_signal(signal.SIGINT)
         try:
