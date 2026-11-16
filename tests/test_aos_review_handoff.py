@@ -348,7 +348,10 @@ def test_invalid_handoff_blocks_real_start_before_any_charge_or_model_send(hando
 
 def test_actual_validated_assessment_drives_one_bounded_lifecycle_correction(handoff, tmp_path):
     p = handoff
-    store, lifecycle, _ = lifecycle_setup(tmp_path / 'lifecycle', max_repairs=1)
+    # The result-producing runtime and receiving lifecycle must name the same
+    # work; dependency verification resolves the recipe by that identity.
+    work_id = p.assignment['work_id']
+    store, lifecycle, _ = lifecycle_setup(tmp_path / 'lifecycle', max_repairs=1, work_id=work_id)
     frozen = candidate(p.source, recipe=p.recipe)
     with Worker(lifecycle, reconcile_on_enter=False) as worker:
         writer = lifecycle.claim(lifecycle.assignments()[0]['assignment_id'], worker.epoch)
@@ -368,7 +371,7 @@ def test_actual_validated_assessment_drives_one_bounded_lifecycle_correction(han
         exhausted = lifecycle.complete('second-assessment-result', reassessment['assignment_id'], second)
         assert exhausted['disposition'] == 'held'
         assert len([row for row in lifecycle.assignments() if row['kind'] == 'repair']) == 1
-        snapshot = lifecycle.snapshot('Q1')
+        snapshot = lifecycle.snapshot(work_id)
         assert snapshot['execution'] == 'held'
         assert any(item['code'] == 'repair_limit' for item in snapshot['technical_blockers'])
 
@@ -376,7 +379,8 @@ def test_actual_validated_assessment_drives_one_bounded_lifecycle_correction(han
 @pytest.mark.parametrize('unknown', [{'effects_reconciled': False}, {'owned_processes': ['SIMULATED:unreaped']}])
 def test_confirmed_finding_does_not_bypass_owned_cleanup_before_repair(handoff, tmp_path, unknown):
     p = handoff
-    _, lifecycle, _ = lifecycle_setup(tmp_path / 'cleanup-lifecycle', max_repairs=1)
+    work_id = p.assignment['work_id']
+    _, lifecycle, _ = lifecycle_setup(tmp_path / 'cleanup-lifecycle', max_repairs=1, work_id=work_id)
     frozen = candidate(p.source, recipe=p.recipe)
     with Worker(lifecycle, reconcile_on_enter=False) as worker:
         writer = lifecycle.claim(lifecycle.assignments()[0]['assignment_id'], worker.epoch)
@@ -387,7 +391,7 @@ def test_confirmed_finding_does_not_bypass_owned_cleanup_before_repair(handoff, 
         response = lifecycle.complete('assessment-result', assessment['assignment_id'], result)
         assert response['disposition'] == 'held'
         assert not any(row['kind'] == 'repair' for row in lifecycle.assignments())
-        assert lifecycle.snapshot('Q1')['execution'] == 'held'
+        assert lifecycle.snapshot(work_id)['execution'] == 'held'
 
 
 @pytest.mark.parametrize('phase', ['implementation', 'assessment'])
