@@ -223,7 +223,7 @@ def stop(runtime, check_id, cancel=False):
         raise
 
 
-def verify_completed(row):
+def verify_completed(row, *, deadline=None):
     """Read-only retained receipt verification; no journal writes or signals."""
     if not isinstance(row, dict):
         raise Rejected('check_cleanup_unknown', 'Exact completed reviewed host cleanup is required')
@@ -240,7 +240,8 @@ def verify_completed(row):
             or snapshot.get('deadline_monotonic') != checked.get('deadline_monotonic')
             or snapshot.get('cleanup_deadline_monotonic') != checked.get('cleanup_deadline_monotonic')):
         raise Rejected('check_cleanup_unknown', 'Completed ownership differs from the saved command binding')
-    verified = owned_host_command.verify_completed(snapshot)
+    verified = (owned_host_command.verify_completed(snapshot, deadline=deadline) if deadline is not None
+                else owned_host_command.verify_completed(snapshot))
     if verified != snapshot:
         raise Rejected('check_cleanup_unknown', 'Newer host ownership evidence differs from the saved completion')
     if checked.get('receipt'):
@@ -249,8 +250,100 @@ def verify_completed(row):
                 or checked['receipt'].get('candidate') != checked.get('candidate')
                 or checked['receipt'].get('native_check_id') != checked.get('check_id')):
             raise Rejected('check_cleanup_unknown', 'Completed check evidence differs from its cleanup')
-        CodexRuntime._verify_check_receipt(checked['receipt'])
+        CodexRuntime._verify_check_receipt(checked['receipt'], deadline=deadline)
     return checked
+
+
+def verify_dependency_check(runtime, work_id, assignment, recipe, result, receipt, *, deadline):
+    """Verify historical host captures without exposing or reopening state roots.
+
+    The caller has already qualified the prerequisite's lifecycle proof. Here
+    the accepted check must also equal its exact producer journal and completed
+    host ownership receipt; an arbitrary path under native-status is insufficient.
+    No current source equality, launch, reconciliation, or journal update occurs.
+    """
+    try:
+        _verify_dependency_check(runtime, work_id, assignment, recipe, result, receipt, deadline=deadline)
+    except Rejected:
+        raise
+    except (KeyError, TypeError, ValueError, OSError, RuntimeError) as error:
+        raise Rejected('dependency_evidence', 'Prerequisite host evidence is missing, malformed or unverifiable: '
+                       + str(error)) from error
+
+
+def _verify_dependency_check(runtime, work_id, assignment, recipe, result, receipt, *, deadline):
+    before_deadline = _clock(deadline)
+    before_deadline()
+    aid, check_id = assignment['attempt_id'], receipt.get('native_check_id')
+    identifier(check_id)
+    output_root = Path(recipe['outputs']) / aid
+    descriptor = next((c for c in recipe['checks'] if c['name'] == receipt['name']), None)
+    if descriptor is None or not checkout_boundary.reviewed_host(recipe):
+        raise Rejected('dependency_evidence', 'Prerequisite host check is outside its approved recipe')
+    output = output_root / descriptor['name']
+    control = runtime.directory / 'native-status' / (check_id + '-host')
+    captures = {str(control / name) for name in ('stdout.log', 'stderr.log')}
+    raw = receipt.get('raw_outputs', {})
+    if (receipt.get('output') != str(output / 'output.txt') or not captures.issubset(raw)
+            or any(path not in captures and not Path(path).is_relative_to(output) for path in raw)):
+        raise Rejected('dependency_evidence', 'Prerequisite raw output differs from its exact host capture paths')
+    for filename in {*raw, receipt['output']}:
+        before_deadline()
+        path = Path(filename)
+        _ordinary(path)
+        if path.resolve() != path or not path.is_file() or path.stat().st_nlink != 1:
+            raise Rejected('dependency_evidence', 'Prerequisite host output must remain an ordinary canonical single-link file')
+    attempt = runtime._get(aid)
+    with runtime._db() as db:
+        saved = db.execute('SELECT id,attempt_id,record FROM native_check WHERE id=?', (check_id,)).fetchone()
+    row = json.loads(saved[2]) if saved else None
+    identity = ('work_id', 'assignment_id', 'attempt_id', 'kind', 'executor', 'candidate', 'scope',
+                'concept_revision', 'concept_digest', 'contract_revision', 'requested_model', 'requested_effort')
+    if (assignment['work_id'] != work_id or not attempt or not row
+            or any(attempt['assignment'].get(key) != assignment.get(key) for key in identity)
+            or saved[:2] != (check_id, aid) or row.get('check_id') != check_id or row.get('attempt_id') != aid
+            or attempt.get('run_outputs') != str(output_root) or attempt.get('recipe_digest') != digest(recipe)
+            or receipt not in attempt.get('terminal_observation', {}).get('result', {}).get('checks', [])
+            or check_id not in result.get('native_checks', []) or row.get('receipt') != receipt):
+        raise Rejected('dependency_evidence', 'Prerequisite host output lost its exact work, attempt or check producer')
+    adapters = runtime._bindings(assignment, recipe)
+    gate = attempt.get('reviewed_host_gate', {})
+    frozen = result['candidate']
+    if (gate.get('mode') != 'reviewed-host-v1' or gate.get('recipe_digest') != digest(recipe)
+            or gate.get('candidate') != frozen or gate.get('checks') != recipe['checks']
+            or gate.get('adapters') != adapters or gate.get('review') != result['initial_reports']['review']
+            or receipt.get('review') != gate.get('review') or json.loads(assignment['candidate']) != frozen):
+        raise Rejected('dependency_evidence', 'Prerequisite host output differs from its qualified source review')
+    scoped = copy.deepcopy(recipe)
+    scoped['checkout_policy']['protected_roots'] = sorted(set(
+        scoped['checkout_policy'].get('protected_roots', [])) | {str(runtime.directory.resolve())})
+    scoped = checkout_boundary.scoped_outputs(scoped, output_root)
+    scoped.update(_attempt_id=aid, _adapter_bindings=adapters)
+    adapter = adapter_for(descriptor)
+    binding = adapters[adapter.ADAPTER_ID]
+    command = adapter.command([part.replace('{output}', scoped['outputs']) for part in descriptor['argv']], output)
+    expected_id = 'nc-' + digest([str(output), command, frozen])[7:39]
+    reviewed_binding = {'gate': digest(gate), 'command': command, 'adapter': binding,
+                        'candidate': frozen, 'contract': native_paths.contract(scoped),
+                        'environment_sha256': row.get('environment_sha256')}
+    if (check_id != expected_id or row.get('ownership_backend') != BACKEND
+            or row.get('host_control') != str(control) or row.get('status') != str(control / 'status.json')
+            or row.get('output') != str(output) or row.get('outputs_root') != str(output_root)
+            or row.get('source') != recipe['source'] or row.get('candidate') != frozen
+            or row.get('native_path_recipe') != scoped or row.get('command') != command
+            or row.get('adapter') != binding or row.get('reviewed_binding') != reviewed_binding
+            or receipt.get('command') != command or receipt.get('adapter') != binding
+            or receipt.get('executor') != assignment['executor'] or receipt.get('scope') != descriptor['scope']):
+        raise Rejected('dependency_evidence', 'Prerequisite host capture differs from its exact native launch binding')
+    before_deadline()
+    verified = verify_completed(row, deadline=deadline)
+    proof = verified['host_owner_receipt']
+    if (verified.get('cancelled') or proof.get('launch_authorized') is not True
+            or proof.get('cancel_requested') or proof.get('timed_out') or proof.get('errors')
+            or proof.get('child', {}).get('exit_code') != 0
+            or verified['cleanup'].get('partial_mutations', {}).get('changes') != []):
+        raise Rejected('dependency_evidence', 'Prerequisite host capture lacks successful exact owned cleanup')
+    before_deadline()
 
 
 def check(runtime, recipe, check, output, executor, frozen):

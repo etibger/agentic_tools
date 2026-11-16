@@ -911,8 +911,12 @@ class CodexRuntime:
                         or len(checks) != len(original_recipe['checks'])):
                     raise Rejected('dependency_evidence', 'Accepted prerequisite lacks every required check')
                 for check in checks:
-                    paths = set(check['raw_outputs']) | {check['output']}
-                    if any(not Path(path).resolve().is_relative_to(output.resolve()) for path in paths):
+                    if checkout_boundary.reviewed_host(original_recipe):
+                        from . import reviewed_host
+                        reviewed_host.verify_dependency_check(self, assignment['work_id'], prior,
+                            original_recipe, result, check, deadline=end)
+                    elif any(not Path(path).resolve().is_relative_to(output.resolve())
+                             for path in set(check['raw_outputs']) | {check['output']}):
                         raise Rejected('dependency_evidence', 'Prerequisite check output is outside its exact attempt')
                     self._verify_check_receipt(check, deadline=end)
                     if (not evidence_passed(check, check.get('exit_code')) or check['candidate'] != result['candidate']

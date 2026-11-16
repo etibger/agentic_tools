@@ -67,6 +67,9 @@ def case(tmp_path, monkeypatch, request):
     monkeypatch.setattr(runtime, '_recipe', lambda *_: recipe)
     monkeypatch.setattr(runtime, '_checkout_before_start', lambda *a, **k: None)
     monkeypatch.setattr(runtime, '_bindings', lambda *_: {})
+    # retained() below deliberately fabricates native receipts without a host
+    # journal. Native producer provenance is covered by the real-command suite.
+    monkeypatch.setattr('agentic_tools.aos.reviewed_host.verify_dependency_check', lambda *a, **k: None)
     monkeypatch.setattr(runtime, '_resource_watch', lambda *_: None)
     monkeypatch.setattr(runtime, '_resource_sample', lambda *a, **k: None)
     monkeypatch.setattr(runtime, '_profile', lambda *a, **k: ([], {}))
