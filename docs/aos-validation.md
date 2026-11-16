@@ -96,6 +96,12 @@ Reuse of accepted desktop close/reopen evidence requires a retained source-impac
 
 Hosted AOS and documentation workflows execute only after an authorized push or workflow dispatch. A locally passing equivalent command is not a hosted CI result. Native child-process fixtures are ordinary owned synthetic commands, not real model or desktop qualification.
 
+The hosted Mac regression job creates a nonsecret synthetic `~/.codex/config.toml`
+when that file is absent. Permission probes must reject access to an existing
+target; an absent file can fail earlier with no permission evidence. This setup
+does not alter an existing regular configuration or weaken the tested access
+rules. Retain the original failed job evidence when correcting runner setup.
+
 ## Retained private regression inventory
 
 Earlier private assessments remain retained with their original results; they are not imported or redistributed. The following public-safe equivalents use repository helpers and disposable synthetic inputs. Counts and historical acceptance remain attached to the original candidate; the new suite protects the maintained behavior.

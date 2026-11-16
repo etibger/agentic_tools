@@ -38,6 +38,20 @@ jobs:
           node-version: "22"
       - run: uv sync --locked --dev --python 3.12.14
       - run: uv run aos version
+      - name: Prepare synthetic credential probe target
+        run: |
+          uv run python - <<'PYCODE'
+          from pathlib import Path
+          directory = Path.home() / '.codex'
+          directory.mkdir(mode=0o700, exist_ok=True)
+          target = directory / 'config.toml'
+          try:
+              with target.open('x') as stream:
+                  stream.write('# Synthetic CI permission-probe target; no credentials.\n')
+          except FileExistsError:
+              if target.is_symlink() or not target.is_file():
+                  raise
+          PYCODE
       # Leave five minutes outside the command bound for setup and diagnostics.
       - name: Run attributed regression shard
         run: >-
