@@ -265,10 +265,13 @@ def handler_for(controller):
 
         def do_POST(self):
             try:
+                # Match the maintained decision host: the in-app browser may
+                # send Origin:null for a same-origin form. Fetch metadata and
+                # the operator key or authenticated session/CSRF still apply.
                 if (self.path not in {'/unlock', '/instruction'} or not self.valid_host()
                         or any(len(self.headers.get_all(name, [])) != 1 for name in
                                ('Host', 'Origin', 'Sec-Fetch-Site', 'Content-Type', 'Content-Length'))
-                        or self.headers.get('Origin') != controller.origin
+                        or self.headers.get('Origin') not in {controller.origin, 'null'}
                         or self.headers.get('Sec-Fetch-Site') != 'same-origin'
                         or self.headers.get('Content-Type') != 'application/x-www-form-urlencoded'
                         or self.headers.get('Transfer-Encoding')):
@@ -298,9 +301,14 @@ def handler_for(controller):
                 self.response(HTTPStatus.OK, '<h1>Saved operator result</h1><p>' + escape(result['message'])
                               + '</p><pre>' + escape(json.dumps(result, indent=2)) + '</pre><p><a href="/">Read current controls</a></p>')
             except (Rejected, OSError, ValueError, KeyError, sqlite3.Error, CookieError):
-                self.response(HTTPStatus.CONFLICT, '<h1>Submission held</h1><p>No new authority was inferred. '
-                              'A submitted instruction may already be retained; read current status before retrying. '
-                              'Owner changes are not allowed here.</p><p><a href="/">Read saved status</a></p>')
+                if self.path == '/unlock':
+                    message = ('<h1>Unlock not confirmed</h1><p>Check the printed HTTPS address, browser request '
+                               'and private operator key. No instruction was submitted.</p>')
+                else:
+                    message = ('<h1>Submission held</h1><p>The request could not be confirmed. '
+                               'A submitted form or instruction may already be retained; '
+                               'read current status before retrying.</p>')
+                self.response(HTTPStatus.CONFLICT, message + '<p><a href="/">Read saved status</a></p>')
     return Handler
 
 
