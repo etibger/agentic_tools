@@ -186,6 +186,7 @@ def capabilities() -> dict:
                         "milestones": "candidate-frozen then named checks and independent-assessment",
                         "forecast_transport": "trusted coordinator MCP record-forecast; no cap changes"},
             "human_intent": {"policy": "host-attested-v1", "enrollment": "explicit and sticky per work",
+                             "attended_surface": "intent-serve; operator-key HTTPS form; no transcript capture",
                              "ingestion": "trusted host Python API only; no MCP ingestion",
                              "controls": "current instruction_id required for enrolled work",
                              "automatic_chat_capture": False, "ownership_transfer": False},

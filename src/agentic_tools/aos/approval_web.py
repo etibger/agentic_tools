@@ -469,7 +469,7 @@ class DecisionService:
         except (OSError, ssl.SSLError) as error:
             raise Rejected("tls_unavailable", "Local HTTPS certificate or key could not be loaded; decisions remain held") from error
         try:
-            self.server = _DecisionHTTPServer(("127.0.0.1", self.port), handler_for(self.controller), context)
+            self.server = _DecisionHTTPServer(("127.0.0.1", self.port), self.request_handler(), context)
         except OSError as error:
             if error.errno == errno.EADDRINUSE:
                 raise Rejected("decision_port_in_use", "The decision port is occupied; the existing listener was not changed") from error
@@ -484,6 +484,10 @@ class DecisionService:
             self.close()
             raise
         return self
+
+    def request_handler(self):
+        """Trusted subclasses may reuse the owned TLS listener for another surface."""
+        return handler_for(self.controller)
 
     def _serve(self):
         self.started.set()
