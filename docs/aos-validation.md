@@ -129,3 +129,56 @@ The neutral assessor independently checks the frozen source, executes affected c
 For actual-host work, verify the assigned worker cannot read/write the ledger, decision credentials or TLS key and cannot reach the decision endpoint; an operator root declaration is insufficient. Check trusted TLS and invalid-certificate failure on the selected route. Record actual source/capabilities: CLI coordinator controls and the optional 0.2.6 MCP coordinator transport are available. The legacy M0 connector is separate. Test receiving-chat tool discovery and exact shared-ledger readback; worker startup remains the explicit existing process route. For a decision wait, demonstrate a human answer arriving during the pending call and the same chat receiving its verified result. An idle-chat wake is a separate, unimplemented behavior.
 
 Desktop adoption must use the original shared ledger and budget boundary. A restored ledger is an inspection/recovery copy with a persisted dispatch fence; it cannot become a second admitted service. Preserve protected sessions, named ports/owners and the old service until the separately approved safe-window/cutover procedure permits a change. T5 code acceptance alone grants neither T6 actions nor Herdr admission. The coordinator prepares those exact operational proposals separately; this guide does not authorize running them.
+
+
+## Fresh attended route qualification
+
+Qualify the foreground `aos start --project … --request …` route against an exact
+source revision. One supported choice is `isolated-checkout-v1` with
+`reviewed-host-v1` validation and `host-owned-v1` native ownership. It requires
+separate private state/readiness/output paths, an external qualified interpreter,
+explicit matching writer/assessor settings, typed checks, sufficient retained
+capacity, an exact two-task DI plan and an available qualified HTTPS decision
+service. Preparation and metadata readiness confer no implementation approval.
+
+For a managed checkout under `.codex`, select the candidate source explicitly
+with `PYTHONPATH` and use the existing project Python outside the protected
+credential directory. Verify the imported module paths, `aos version` source
+digest, readiness runtime digest, pinned SDK/binary hashes and eventual worker
+settings acknowledgements. A shared installed CLI with the same component
+version supplies none of these adoption facts. Do not weaken protected roots to
+make its interpreter accessible.
+
+Enroll the fresh contract with `human_intent_policy: host-attested-v1` and
+qualify the embedding trusted host's inspection of original human input before
+calling the private Python ingestion API. Exercise controls and receiving-owner
+handoff using the saved instruction identity. The coordinator or model must not
+attest its own prose as a human instruction. Synthetic API tests qualify the
+contract only; automatic desktop capture and ownership transfer remain
+unsupported. Missing trustworthy host ingestion holds enrolled work.
+
+Keep the human present for the exact decision page and verify its durable saved
+answer. Display, browser automation and test fixture answers are separate facts.
+Neither a synthetic decision nor an unavailable decision service passes that
+gate. Check approval and instruction authority again before resource reservation.
+
+The fresh route's production review/native-check gates require the exact frozen
+candidate. The retained assessment-evidence preclaim barrier also exists, but
+its recovery-specific producers do not automatically qualify a fresh feature
+requiring service/import/restart checkpoints. Such a feature needs applicable
+supported producers and consumer evidence before its dependent effects. A
+source-only increment must explicitly exclude those effects in its approved
+scope; choosing that smaller scope cannot waive a required product check.
+
+Production host-command qualification should cover the actual child environment,
+normal temporary parent, stable process identity, positive owner cleanup,
+nonzero exit, cancellation, truthful receipts and preservation of an unrelated
+owned peer. The native fixture in `tests/test_aos_reviewed_host_native.py` exercises
+these command boundaries without a model or product job. It does not prove a
+saved human answer, launch acknowledgement or live worker permission profile.
+Keep any applicable native/runtime failure held until separately resolved.
+
+Settings rebind, SSH/VM ownership, closed-attempt recovery and unattended chat
+continuation are separate route choices. If selected, qualify their actual
+consumers and final expanded inputs before scarce readiness. Leaving them out
+of a fresh route does not close their existing issues or erase failed history.

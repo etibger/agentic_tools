@@ -54,6 +54,52 @@ def identifier(value: str) -> str:
     return value
 
 
+def validate_introduction(title: str, structure: list[str], team: list[dict]) -> None:
+    """Pure introduction barrier, shared by static preparation and storage."""
+    if not title.strip() or not structure or not team:
+        raise Rejected("missing_introduction", "Title, project structure, and provisional team are required")
+    for member in team:
+        if not all(member.get(field) for field in ("name", "role", "grade", "model", "effort", "scope")):
+            raise Rejected("missing_team_fields", "Each proposed member needs name, role, grade, model, effort, scope")
+
+
+def concept_package(work_id: str, package_id: str, revision: int, body: str,
+                    acceptance: list[str], team_envelope: list[dict], authority: str, *,
+                    recommendation: str | None = None, alternative: str | None = None,
+                    consequence: str | None = None, execution_envelope: dict | None = None,
+                    decision_context: dict | None = None, di_plan: dict | None = None) -> dict:
+    """Build and validate exact package bytes without opening a ledger."""
+    identifier(package_id)
+    if type(revision) is not int or revision < 1:
+        raise Rejected("invalid_revision", "Concept revision must be a positive integer")
+    if not body.strip() or not acceptance or not team_envelope or not authority.strip():
+        raise Rejected("incomplete_concept", "Body, acceptance, team envelope, and authority are required")
+    package = {"format": "aos-concept-v1", "work_id": work_id, "package_id": package_id,
+               "revision": revision, "body": body, "acceptance": acceptance,
+               "team_envelope": team_envelope, "authority": authority}
+    if any(value is not None for value in (recommendation, alternative, consequence)):
+        if not all(isinstance(value, str) and value.strip() for value in (recommendation, alternative, consequence)):
+            raise Rejected("incomplete_decision_context", "Recommendation, alternative, and consequence are required together")
+        package.update(recommendation=recommendation, alternative=alternative, consequence=consequence)
+    if decision_context is not None:
+        if (not isinstance(decision_context, dict) or set(decision_context) != set(DECISION_CONTEXT_LABELS)
+                or not all(isinstance(value, str) and value.strip() and len(value) <= 4096
+                           for value in decision_context.values())
+                or recommendation is None):
+            raise Rejected("incomplete_decision_context", "Provide all six brief fields (1–4096 characters each), recommendation, alternative, and consequence")
+        package["decision_context"] = decision_context
+    if execution_envelope is not None:
+        if not isinstance(execution_envelope, dict):
+            raise Rejected("invalid_execution_envelope", "Approved execution bounds must be an explicit object")
+        package["execution_envelope"] = execution_envelope
+        from .planning import validate_execution_plan
+        validate_execution_plan(di_plan, team_envelope, execution_envelope)
+    if di_plan is not None:
+        from .planning import validate_plan
+        package['di_plan'] = validate_plan(di_plan, team_envelope)
+    return package
+
+
 def private_state_dir(path: Path, worker_writable_roots: tuple[Path, ...]) -> Path:
     """Check the configured separation, with actual sandbox denial still required."""
     path = path.expanduser().absolute()
@@ -218,11 +264,7 @@ class Store:
 
     def introduce(self, operation_id: str, work_id: str, title: str, structure: list[str], team: list[dict]) -> dict:
         identifier(work_id)
-        if not title.strip() or not structure or not team:
-            raise Rejected("missing_introduction", "Title, project structure, and provisional team are required")
-        for member in team:
-            if not all(member.get(field) for field in ("name", "role", "grade", "model", "effort", "scope")):
-                raise Rejected("missing_team_fields", "Each proposed member needs name, role, grade, model, effort, scope")
+        validate_introduction(title, structure, team)
         payload = ["introduce", work_id, title, structure, team]
         with self._transaction() as db:
             if prior := self._prior(db, operation_id, payload):
@@ -242,34 +284,9 @@ class Store:
                 recommendation: str | None = None, alternative: str | None = None,
                 consequence: str | None = None, execution_envelope: dict | None = None,
                 decision_context: dict | None = None, di_plan: dict | None = None) -> dict:
-        identifier(package_id)
-        if type(revision) is not int or revision < 1:
-            raise Rejected("invalid_revision", "Concept revision must be a positive integer")
-        if not body.strip() or not acceptance or not team_envelope or not authority.strip():
-            raise Rejected("incomplete_concept", "Body, acceptance, team envelope, and authority are required")
-        package = {"format": "aos-concept-v1", "work_id": work_id, "package_id": package_id,
-                   "revision": revision, "body": body, "acceptance": acceptance,
-                   "team_envelope": team_envelope, "authority": authority}
-        if any(value is not None for value in (recommendation, alternative, consequence)):
-            if not all(isinstance(value, str) and value.strip() for value in (recommendation, alternative, consequence)):
-                raise Rejected("incomplete_decision_context", "Recommendation, alternative, and consequence are required together")
-            package.update(recommendation=recommendation, alternative=alternative, consequence=consequence)
-        if decision_context is not None:
-            if (not isinstance(decision_context, dict) or set(decision_context) != set(DECISION_CONTEXT_LABELS)
-                    or not all(isinstance(value, str) and value.strip() and len(value) <= 4096
-                               for value in decision_context.values())
-                    or recommendation is None):
-                raise Rejected("incomplete_decision_context", "Provide all six brief fields (1–4096 characters each), recommendation, alternative, and consequence")
-            package["decision_context"] = decision_context
-        if execution_envelope is not None:
-            if not isinstance(execution_envelope, dict):
-                raise Rejected("invalid_execution_envelope", "Approved execution bounds must be an explicit object")
-            package["execution_envelope"] = execution_envelope
-            from .planning import validate_execution_plan
-            validate_execution_plan(di_plan, team_envelope, execution_envelope)
-        if di_plan is not None:
-            from .planning import validate_plan
-            package['di_plan'] = validate_plan(di_plan, team_envelope)
+        package = concept_package(work_id, package_id, revision, body, acceptance, team_envelope, authority,
+            recommendation=recommendation, alternative=alternative, consequence=consequence,
+            execution_envelope=execution_envelope, decision_context=decision_context, di_plan=di_plan)
         payload = ["present", expected_work_revision, package]
         with self._transaction() as db:
             if prior := self._prior(db, operation_id, payload):

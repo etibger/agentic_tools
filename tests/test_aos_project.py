@@ -872,3 +872,91 @@ def test_reviewed_host_project_cannot_mix_local_test_permissions(setup):
     assert not result['ready'] and result['blocker']['code'] == 'checkout_scope'
     assert 'cannot mix native_local_tests' in result['blocker']['detail']
     assert p.calls == [] and list(p.state.iterdir()) == []
+
+
+@pytest.mark.parametrize('invalid', ['foreign-owner', 'swapped-owners', 'missing-check', 'extra-gate'])
+@pytest.mark.parametrize('entry', ['prepare', 'static-plan', 'start'])
+def test_execution_plan_rejects_before_readiness_or_control_creation(setup, monkeypatch, invalid, entry):
+    """Exercise the fresh production route, including its directory barrier."""
+    from agentic_tools.aos import supervisor
+    from agentic_tools.aos.store import Store
+
+    p = setup
+    plan = p.request['concept']['di_plan']
+    if invalid == 'foreign-owner':
+        plan['tasks'][0]['owner'] = 'undeclared-owner'
+    elif invalid == 'swapped-owners':
+        plan['tasks'][0]['owner'], plan['tasks'][1]['owner'] = (
+            plan['tasks'][1]['owner'], plan['tasks'][0]['owner'])
+    elif invalid == 'missing-check':
+        plan['milestones'][1]['verification'] = ['independent-assessment']
+    else:
+        plan['milestones'][0]['verification'].append('unenforced-checkpoint')
+    # Even a missing state/output directory must not be created for this plan.
+    p.config['state_dir'] = str(p.control / 'future-state')
+    p.config['recipe']['outputs'] = str(p.control / 'future-outputs')
+    p.config['worker_writable_roots'][1] = p.config['recipe']['outputs']
+    p.request['concept']['execution_envelope']['product_budget']['ledger_directory'] = p.config['state_dir']
+    p.save()
+    before = {str(path): path.read_bytes() for path in p.control.rglob('*') if path.is_file()}
+    monkeypatch.setattr(Store, '__init__', lambda *a, **kw: pytest.fail('Invalid plan opened product Store'))
+    if entry == 'start':
+        result = supervisor.start(p.project_file, p.request_file, prepare=lambda *a: pytest.fail('Invalid plan spent readiness'))
+    elif entry == 'static-plan':
+        result = project.static_plan(p.project_file, p.request_file)
+    else:
+        result = p.run()
+    assert result.get('blocker') and ('invalid_di_plan' in str(result['blocker']))
+    assert p.calls == []
+    assert not Path(p.config['state_dir']).exists()
+    assert not Path(p.config['recipe']['outputs']).exists()
+    assert {str(path): path.read_bytes() for path in p.control.rglob('*') if path.is_file()} == before
+
+
+@pytest.mark.parametrize('invalid', ['swapped-owners', 'missing-check', 'extra-gate'])
+def test_execution_plan_failure_preserves_existing_readiness_history(setup, invalid):
+    p = setup
+    readiness = Path(p.config['readiness_dir'])
+    readiness.mkdir(mode=0o700)
+    (readiness / 'control').mkdir(mode=0o700)
+    journal = readiness / 'control/journal.json'
+    journal.write_text('{"attempts": [{"status": "failed", "charged": true}]}')
+    plan = p.request['concept']['di_plan']
+    if invalid == 'swapped-owners':
+        plan['tasks'][0]['owner'], plan['tasks'][1]['owner'] = (
+            plan['tasks'][1]['owner'], plan['tasks'][0]['owner'])
+    elif invalid == 'missing-check':
+        plan['milestones'][1]['verification'] = ['independent-assessment']
+    else:
+        plan['milestones'][0]['verification'].append('unenforced-checkpoint')
+    p.save()
+    before = journal.read_bytes()
+    result = p.run()
+    assert not result['ready'] and result['blocker']['code'] == 'invalid_di_plan'
+    assert p.calls == [] and journal.read_bytes() == before
+    assert list(p.state.iterdir()) == []
+
+
+@pytest.mark.parametrize('invalid', ['blank-body', 'partial-recommendation', 'context-without-recommendation',
+                                     'empty-resource', 'blank-title', 'empty-team-role'])
+def test_existing_storage_barriers_precede_readiness(setup, invalid):
+    p = setup
+    concept = p.request['concept']
+    if invalid == 'blank-body':
+        concept['body'] = '  '
+    elif invalid == 'partial-recommendation':
+        concept['recommendation'] = 'Proceed'
+    elif invalid == 'context-without-recommendation':
+        from agentic_tools.aos.store import DECISION_CONTEXT_LABELS
+        concept['decision_context'] = {key: 'Synthetic decision context' for key in DECISION_CONTEXT_LABELS}
+    elif invalid == 'empty-resource':
+        concept['execution_envelope']['resources'] = ['']
+    elif invalid == 'blank-title':
+        p.request['introduction']['title'] = '  '
+    else:
+        p.request['introduction']['team'][0]['role'] = ''
+        concept['team_envelope'][0]['role'] = ''
+    p.save()
+    result = p.run()
+    assert not result['ready'] and result['blocker']
+    assert p.calls == [] and list(p.state.iterdir()) == []

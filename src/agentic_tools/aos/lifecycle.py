@@ -252,6 +252,35 @@ def view_in(db: sqlite3.Connection, work_id: str) -> dict:
     return source
 
 
+def validate_contract(contract: dict) -> None:
+    """Pure contract barrier shared by static preparation and registration."""
+    required = ('revision', 'workflow', 'concept_revision', 'concept_digest', 'baseline', 'behavior_delta',
+                'required_checks', 'writer', 'assessor', 'receiving_owner', 'authority', 'resources',
+                'prerequisites', 'qualified_route', 'max_assignments', 'max_repairs', 'max_seconds', 'model', 'effort')
+    if any(key not in contract for key in required) or any(not contract[key] for key in required if key != 'max_repairs'):
+        raise Rejected('incomplete_contract', 'Exact concept, baseline, delta, checks, independence, authority, resources and limits required')
+    if contract.get('requires_detached_processes'):
+        raise Rejected('detached_processes_unqualified', 'Assignments needing detached processes remain unqualified and cannot be admitted')
+    if contract.get('human_intent_policy') not in (None, human_intent.POLICY):
+        raise Rejected('human_intent', 'Unsupported human instruction policy')
+    if contract['workflow'] not in ('bug-fix', 'feature-change'):
+        raise Rejected('unsupported_workflow', 'Only the approved bug-fix and feature-change paths exist')
+    if contract['workflow'] == 'feature-change' and not contract.get('compatibility_checks'):
+        raise Rejected('missing_feature_contract', 'Feature changes require compatibility/consumer checks')
+    if (contract['writer'] == contract['assessor'] or not isinstance(contract['required_checks'], list)
+            or len(set(contract['required_checks'])) != len(contract['required_checks'])):
+        raise Rejected('independence_required', 'A distinct assessor and unique named checks are required')
+    if (any(type(contract[k]) is not int or contract[k] < 1 for k in ('revision', 'concept_revision', 'max_assignments', 'max_seconds'))
+            or type(contract['max_repairs']) is not int or not 0 <= contract['max_repairs'] <= 2
+            or type(contract.get('max_startup_retries', 0)) is not int
+            or not 0 <= contract.get('max_startup_retries', 0) <= 2
+            or (contract.get('max_startup_retries', 0) and contract.get('execution_policy') != 'isolated-checkout-v1')):
+        raise Rejected('invalid_limits', 'Positive bounded assignment/time limits and at most two repairs or isolated-checkout startup retries required')
+    if (not isinstance(contract['prerequisites'], dict) or not isinstance(contract['resources'], list)
+            or not all(isinstance(r, str) and r for r in contract['resources'])):
+        raise Rejected('invalid_contract', 'Named prerequisites and resources required')
+
+
 class Lifecycle:
     def __init__(self, store: Store):
         self.store = store
@@ -305,31 +334,7 @@ class Lifecycle:
 
     def register(self, operation_id: str, work_id: str, contract: dict, *,
                  expected_work_revision: int | None = None, expected_digest: str | None = None) -> dict:
-        required = ('revision', 'workflow', 'concept_revision', 'concept_digest', 'baseline', 'behavior_delta',
-                    'required_checks', 'writer', 'assessor', 'receiving_owner', 'authority', 'resources',
-                    'prerequisites', 'qualified_route', 'max_assignments', 'max_repairs', 'max_seconds', 'model', 'effort')
-        if any(key not in contract for key in required) or any(not contract[key] for key in required if key != 'max_repairs'):
-            raise Rejected('incomplete_contract', 'Exact concept, baseline, delta, checks, independence, authority, resources and limits required')
-        if contract.get('requires_detached_processes'):
-            raise Rejected('detached_processes_unqualified', 'Assignments needing detached processes remain unqualified and cannot be admitted')
-        if contract.get('human_intent_policy') not in (None, human_intent.POLICY):
-            raise Rejected('human_intent', 'Unsupported human instruction policy')
-        if contract['workflow'] not in ('bug-fix', 'feature-change'):
-            raise Rejected('unsupported_workflow', 'Only the approved bug-fix and feature-change paths exist')
-        if contract['workflow'] == 'feature-change' and not contract.get('compatibility_checks'):
-            raise Rejected('missing_feature_contract', 'Feature changes require compatibility/consumer checks')
-        if (contract['writer'] == contract['assessor'] or not isinstance(contract['required_checks'], list)
-                or len(set(contract['required_checks'])) != len(contract['required_checks'])):
-            raise Rejected('independence_required', 'A distinct assessor and unique named checks are required')
-        if (any(type(contract[k]) is not int or contract[k] < 1 for k in ('revision', 'concept_revision', 'max_assignments', 'max_seconds'))
-                or type(contract['max_repairs']) is not int or not 0 <= contract['max_repairs'] <= 2
-                or type(contract.get('max_startup_retries', 0)) is not int
-                or not 0 <= contract.get('max_startup_retries', 0) <= 2
-                or (contract.get('max_startup_retries', 0) and contract.get('execution_policy') != 'isolated-checkout-v1')):
-            raise Rejected('invalid_limits', 'Positive bounded assignment/time limits and at most two repairs or isolated-checkout startup retries required')
-        if (not isinstance(contract['prerequisites'], dict) or not isinstance(contract['resources'], list)
-                or not all(isinstance(r, str) and r for r in contract['resources'])):
-            raise Rejected('invalid_contract', 'Named prerequisites and resources required')
+        validate_contract(contract)
         payload = self._command_payload(['register', work_id, contract], expected_work_revision, expected_digest)
         with self.store._transaction() as db:
             if prior := self.store._prior(db, operation_id, payload):

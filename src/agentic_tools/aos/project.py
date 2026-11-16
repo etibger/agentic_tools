@@ -23,7 +23,8 @@ from . import budgets, checkout_boundary, instructions, native_network, native_p
 from .checks import source_digest, validate_descriptors
 from .coordinator import ConceptRequest, ExecutionEnvelope, IntroductionRequest
 from .readiness import run_readiness
-from .store import Rejected, digest, identifier
+from .lifecycle import validate_contract
+from .store import Rejected, concept_package, digest, identifier, validate_introduction
 
 FORMAT = 'aos-prepared-project-v1'
 _RECIPE_KEYS = {'execution_policy', 'source', 'outputs', 'read_roots', 'checks', 'max_seconds',
@@ -286,6 +287,12 @@ def _paths(config: dict, bindings: dict, packet: dict) -> dict:
 def _request(config: dict, request: dict, recipe: dict):
     intro, concept = request['introduction'], request['concept']
     bounds = concept['execution_envelope']
+    # Reuse the approval/dispatch barrier before directory preparation or any
+    # scarce readiness attempt. Schema validity alone cannot qualify a plan.
+    validate_introduction(intro['title'], intro['structure'], intro['team'])
+    package = concept_package(**{key: value for key, value in concept.items()
+                                 if key not in ('operation_id', 'expected_work_revision')})
+    validate_contract({**bounds, 'concept_revision': concept['revision'], 'concept_digest': digest(package)})
     if set(bounds) - _ENVELOPE_KEYS:
         raise Rejected('project_request', 'Unsupported execution envelope field for this profile')
     if (intro['work_id'] != concept['work_id'] or intro['team'] != concept['team_envelope']
