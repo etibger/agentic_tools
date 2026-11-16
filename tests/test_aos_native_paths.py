@@ -176,16 +176,21 @@ def test_native_root_cannot_make_trusted_adapter_writable(prepared):
     p = prepared
     adapter_root = check_adapters.code_paths()[0].parent
     p.recipe['native_write_roots'] = [{'path': str(adapter_root), 'kind': 'cache'}]
-    with pytest.raises(Rejected, match='adapter code'):
+    managed = adapter_root.resolve().is_relative_to((Path.home() / '.codex').resolve())
+    with pytest.raises(Rejected, match='protected' if managed else 'adapter code') as error:
         bindings(p.store, 'Q2', {}, p.recipe)
+    assert error.value.code == ('native_scope' if managed else 'check_adapter')
 
 
 def test_native_root_cannot_make_coordinator_code_writable(prepared):
     from agentic_tools.aos import checks
     p = prepared
-    p.recipe['native_write_roots'] = [{'path': str(Path(checks.__file__).parent), 'kind': 'cache'}]
-    with pytest.raises(Rejected, match='coordinator code'):
+    code_root = Path(checks.__file__).parent
+    p.recipe['native_write_roots'] = [{'path': str(code_root), 'kind': 'cache'}]
+    managed = code_root.resolve().is_relative_to((Path.home() / '.codex').resolve())
+    with pytest.raises(Rejected, match='protected' if managed else 'coordinator code') as error:
         bindings(p.store, 'Q2', {}, p.recipe)
+    assert error.value.code == ('native_scope' if managed else 'check_adapter')
 
 
 def test_native_cache_cannot_contain_qualification_receipt(tmp_path, monkeypatch):
