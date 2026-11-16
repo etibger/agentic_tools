@@ -22,7 +22,7 @@ from urllib.parse import parse_qs, urlencode
 
 from .approval_web import DecisionService, document
 from . import human_intent
-from .lifecycle import Lifecycle
+from .lifecycle import Lifecycle, TERMINAL_EXECUTIONS
 from .store import Rejected, canonical, digest, identifier, now
 
 
@@ -227,7 +227,7 @@ def handler_for(controller):
 
         def do_GET(self):
             try:
-                if self.path != '/' or not self.valid_host():
+                if self.path not in {'/', '/?resume=no', '/?stop=no'} or not self.valid_host():
                     raise Rejected('operator_access', 'Open the exact operator page')
                 csrf = self.session()
                 if not csrf:
@@ -238,44 +238,43 @@ def handler_for(controller):
                     return
                 current = controller.status()
                 run = controller.store.read(controller.work_id)
-                owner = current.get('owner') or json.loads(self.contract())['receiving_owner']
-                controls = '<h1>Human instruction controls</h1><section><p>Work: ' + escape(controller.work_id)
-                controls += '</p><p>Responsible owner: ' + escape(owner) + '</p><p>Current instruction: <strong>'
-                controls += escape(current['disposition']) + '</strong></p><p>Original controlling identity: '
-                controls += escape(current.get('controlling_instruction') or 'No verified current instruction')
-                controls += '</p><p>Execution: ' + escape(run['execution']) + '</p><p>Next action: '
-                controls += escape(current.get('next_action', 'Enable instruction controls with the registered owner.')) + '</p></section>'
-                if run['execution'] in {'held', 'paused'} or run['lifecycle']['technical_blockers']:
-                    controls += '<p>Execution remains ' + escape(run['execution']) + '. A saved resume does not grant approval, '
-                    controls += 'clear cleanup obligations or admit work. The coordinator must reconcile the existing execution gates.</p>'
-                refs = current.get('current_heads', []) + [r['conflict_id'] for r in current.get('conflicts', [])]
-                controls += '<p>Only a deliberate submission below gives a new instruction. Quoted/history text and status views give no authority. '
-                controls += 'This page cannot approve work, transfer roles or start a worker.</p>'
-                controls += self.form(csrf, owner, refs, current.get('controlling_instruction') or '', current)
-                controls += '<details><summary>Original instruction history and evidence problems</summary><pre>'
-                controls += escape(json.dumps(current, indent=2)) + '</pre></details><p><a href="/">Refresh saved status</a></p>'
+                stopped = current['disposition'] in {'stop', 'pause'} and run['execution'] not in TERMINAL_EXECUTIONS
+                status = (run['execution'].capitalize() if run['execution'] in TERMINAL_EXECUTIONS else
+                          current['disposition'].capitalize() + ' instruction in effect' if stopped else
+                          'Resume instruction saved' if current['disposition'] == 'running' else
+                          'Waiting for instruction review')
+                controls = '<h1>' + escape(run['title']) + '</h1><p>Status: <strong>' + status + '</strong></p>'
+                if self.path in {'/?resume=no', '/?stop=no'}:
+                    action = 'resume' if self.path == '/?resume=no' else 'stop'
+                    controls += '<p>No ' + action + ' instruction was submitted. The latest saved instruction remains in effect.</p>'
+                elif stopped:
+                    title = run['title'].casefold()
+                    question = ('Resume the disposable AOS qualification work?' if 'disposable' in title and 'qualification' in title
+                                else 'Resume this work?')
+                    controls += '<h2>' + question + '</h2><p>Yes saves your resume instruction. Separate approval and other checks still apply.</p>'
+                    controls += self.confirmation_form(csrf, current, 'resume')
+                    controls += '<p><a href="/?resume=no">No</a></p>'
+                elif current['disposition'] == 'running' and run['execution'] not in TERMINAL_EXECUTIONS:
+                    controls += '<h2>Stop this work?</h2><p>Yes saves a stop instruction. Active work may still need cleanup.</p>'
+                    controls += self.confirmation_form(csrf, current, 'stop')
+                    controls += '<p><a href="/?stop=no">No</a></p>'
+                else:
+                    controls += '<p>No resume choice is available here. The responsible owner must review the saved status.</p>'
+                controls += '<details><summary>Technical evidence</summary><pre>'
+                controls += escape(json.dumps({'work_id': controller.work_id, 'execution': run['execution'],
+                                               'human_intent': current}, indent=2)) + '</pre></details>'
+                controls += '<p><a href="/">Refresh saved status</a></p>'
                 self.response(HTTPStatus.OK, controls)
             except (Rejected, OSError, ValueError, KeyError, sqlite3.Error, CookieError):
                 self.response(HTTPStatus.SERVICE_UNAVAILABLE, '<h1>Controls unavailable</h1><p>Read current evidence before acting. No instruction was inferred.</p>')
 
-        def contract(self):
-            with controller.store._connection() as db:
-                return db.execute('SELECT contract FROM lifecycle WHERE work_id=?', (controller.work_id,)).fetchone()[0]
-
-        def form(self, csrf, owner, refs, reference, current):
-            values = {'csrf': csrf, 'input_id': controller.issue_form(csrf, current)}
+        def confirmation_form(self, csrf, current, action):
+            values = {'csrf': csrf, 'input_id': controller.issue_form(csrf, current), 'action': action,
+                      'owner': current['owner'], 'reference': current['controlling_instruction'],
+                      'supersedes': ' '.join(current['current_heads'])}
             hidden = ''.join('<input type="hidden" name="' + k + '" value="' + escape(v, quote=True) + '">' for k, v in values.items())
             return ('<form method="post" action="/instruction">' + hidden
-                    + '<label>Instruction replaces these original identities (space separated)<textarea name="supersedes">'
-                    + escape(' '.join(refs)) + '</textarea></label><p>Confirm these references before submitting a new instruction.</p>'
-                    + '<label>Agreed owner <input name="owner" value="' + escape(owner, quote=True) + '"></label>'
-                    + '<label>Original identity for replay / current identity for handoff <input name="reference" value="'
-                    + escape(reference, quote=True) + '"></label><p>'
-                    + ''.join('<button name="action" value="' + action + '">' + label + '</button>' for action, label in [
-                        ('enroll', 'Enable controls'), ('stop', 'Stop this work'), ('pause', 'Pause this work'),
-                        ('resume', 'Explicitly resume this work'), ('cancel', 'Cancel this execution'),
-                        ('unresolved', 'Record unresolved history and hold'), ('replay', 'Replay original input'),
-                        ('handoff', 'Check same-owner handoff')]) + '</p></form>')
+                    + '<button>Yes</button></form>')
 
         def do_POST(self):
             unlock_failure = 'request'
@@ -315,8 +314,18 @@ def handler_for(controller):
                         or not hmac.compare_digest(csrf.encode(), fields['csrf'].encode())):
                     raise Rejected('operator_access', 'Current operator session required')
                 result = controller.submit(fields)
-                self.response(HTTPStatus.OK, '<h1>Saved operator result</h1><p>' + escape(result['message'])
-                              + '</p><pre>' + escape(json.dumps(result, indent=2)) + '</pre><p><a href="/">Read current controls</a></p>')
+                message = result['message']
+                if fields['action'] in {'resume', 'stop'} and not result.get('interrupted'):
+                    current = controller.status()
+                    if fields['action'] == 'resume' and current['disposition'] == 'running':
+                        message = 'Your resume instruction is saved. Separate approval and other checks still apply.'
+                    elif fields['action'] == 'stop' and current['disposition'] == 'stop':
+                        message = 'Your stop instruction is saved. Active work may still need cleanup.'
+                    else:
+                        message = 'Your submission is retained. The latest saved instruction determines the hold; read current status.'
+                self.response(HTTPStatus.OK, '<h1>Saved operator result</h1><p>' + escape(message)
+                              + '</p><details><summary>Technical evidence</summary><pre>' + escape(json.dumps(result, indent=2))
+                              + '</pre></details><p><a href="/">Read current status</a></p>')
             except Exception as error:
                 handled = isinstance(error, (Rejected, OSError, ValueError, KeyError, sqlite3.Error, CookieError))
                 if self.path != '/unlock' and not handled:
