@@ -33,6 +33,7 @@ def case(tmp_path, monkeypatch, request):
     adapters = {'native-build-v1': binding}
     errors = []
     lifecycle = SimpleNamespace(store=SimpleNamespace(directory=state),
+                                assessment_review_context=lambda *_: {'mode': 'initial-assessment'},
                                 assignment_authority_errors=lambda assignment: list(errors))
     runtime = CodexRuntime(lifecycle, {'WORK': base}, work_id='WORK')
     # This existing fixture selects no coordinator evidence gate.
@@ -47,7 +48,8 @@ def case(tmp_path, monkeypatch, request):
     report.write_text(json.dumps({'candidate_identity': frozen['identity'], 'verdict': 'pass',
                                   'findings': [], 'limits': 'Independent source review only.'}))
     record = {'attempt_id': 'assessment-1', 'phase': 'checking', 'created_at': datetime.now(timezone.utc).isoformat(),
-              'assignment': {'work_id': 'WORK', 'attempt_id': 'assessment-1', 'kind': 'assessment', 'executor': 'reviewer',
+              'assignment': {'work_id': 'WORK', 'attempt_id': 'assessment-1', 'assignment_id': 'as-assessment-1',
+                             'kind': 'assessment', 'executor': 'reviewer',
                              'candidate': canonical(frozen)},
               'recipe_digest': digest(base), 'model_calls_attempted': 1,
               'startup_monotonic': time.monotonic(), 'startup_deadline_monotonic': time.monotonic() + 60,

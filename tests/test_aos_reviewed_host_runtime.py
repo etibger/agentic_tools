@@ -346,6 +346,8 @@ def test_stale_triage_evidence_is_rejected_before_any_new_reservation(assessment
 
 
 _RETAINED_REVIEW_FIELDS = {
+    'assessment_review_context': {'mode': 'post-repair-reassessment', 'lineage_sha256': 'SIMULATED-lineage'},
+    'reassessment_evidence': {'path': 'SIMULATED-owned-reassessment', 'sha256': 'SIMULATED-exact-bytes'},
     'assessment_context': {'purpose': 'native_failure_triage', 'origin': {'attempt_id': 'a-prior'}},
     'triage_feedback': {'candidate': 'SIMULATED-candidate', 'checks': [{'name': 'fixture', 'result': 'fail'}]},
     'triage_evidence': {'path': 'SIMULATED-owned-evidence', 'sha256': 'SIMULATED-exact-bytes'},

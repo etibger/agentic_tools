@@ -58,6 +58,7 @@ def isolated(tmp_path, monkeypatch):
         yield SimpleNamespace(execute=lambda *args: SimpleNamespace(
             fetchone=lambda: {**assignment, 'state': 'sent'}))
     lifecycle = SimpleNamespace(store=SimpleNamespace(directory=state, _connection=connection),
+        assessment_review_context=lambda *_: {'mode': 'initial-assessment'},
         assignment_authority_errors=lambda row: [], _run=lambda db, work: ({'cycle': 0}, contract))
     runtime = CodexRuntime(lifecycle, {assignment['work_id']: recipe})
     monkeypatch.setattr(runtime, '_package', lambda row: package)
