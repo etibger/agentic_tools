@@ -103,6 +103,7 @@ def _passive(lifecycle, db, audit, *, published=False):
 
 
 def _capacity(lifecycle, db, contract):
+    from . import plan_runtime
     recipe = contract['runtime_recipe']
     run, _ = lifecycle._run(db, contract['_work_id'])
     used = lifecycle._startup_retries_used_in(db, contract['_work_id'])
@@ -129,7 +130,10 @@ def _capacity(lifecycle, db, contract):
     if any(type(a.get('budget_seconds')) is not int or a['budget_seconds'] < 1 for a in attempts):
         _reject('Original reserved-time accounting is incomplete')
     count = db.execute('SELECT count(*) FROM assignment WHERE work_id=?', (contract['_work_id'],)).fetchone()[0]
-    required = 1 + 3 * repairs + retries
+    latest = db.execute('SELECT * FROM assignment WHERE work_id=? ORDER BY rowid DESC LIMIT 1',
+                        (contract['_work_id'],)).fetchone()
+    following = plan_runtime.remaining_jobs_in(db, latest) if latest is not None else 0
+    required = 1 + following + 3 * repairs + retries
     receipt = {'ready': True, 'phase': 'assessment', 'required_assignments': required,
                'required_seconds': required * recipe['max_seconds'], 'attempts_reserved': len(attempts),
                'seconds_reserved': sum(a['budget_seconds'] for a in attempts), 'lifecycle_assignments': count,

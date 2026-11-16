@@ -458,13 +458,18 @@ class Lifecycle:
         work = self.store._work(db, assignment['work_id'])
         errors = (self._approved_envelope_errors(db, assignment['work_id'], contract)
                   + human_intent.errors_in(db, assignment['work_id']))
+        try:
+            expected_scope = plan_runtime.expected_scope_in(db, assignment, assignment_scope(contract, assignment['kind']))
+        except Rejected as error:
+            errors.append(str(error))
+            expected_scope = {}
         if (assignment['concept_revision'] != work['current_concept']
                 or assignment['contract_revision'] != contract['revision']
                 or assignment['concept_digest'] != contract['concept_digest']
                 or assignment['requested_model'] != contract['model']
                 or assignment['requested_effort'] != contract['effort']
                 or assignment['executor'] != contract['assessor' if assignment['kind'] == 'assessment' else 'writer']
-                or assignment['scope'] != canonical(assignment_scope(contract, assignment['kind']))):
+                or assignment['scope'] != canonical(expected_scope)):
             errors.append('Saved assignment no longer matches the approved current contract')
         if ((assignment.get('runtime_model') is not None and assignment['runtime_model'] != assignment['requested_model'])
                 or (assignment.get('runtime_effort') is not None and assignment['runtime_effort'] != assignment['requested_effort'])):
@@ -534,7 +539,9 @@ class Lifecycle:
                         source=recipe['source'], max_repairs=contract['max_repairs'],
                         max_seconds=recipe['max_seconds'], max_assignments=contract['max_assignments'],
                         lifecycle_assignments=count, max_startup_retries=contract.get('max_startup_retries', 0),
-                        reviewed_host=reviewed_host(recipe))
+                        reviewed_host=reviewed_host(recipe),
+                        planned_assignments=len(plan_runtime.package_in(db, work_id)['di_plan']['tasks'])
+                            if plan_runtime.package_in(db, work_id)['di_plan'].get('execution_profile') == 'serial-milestones-v1' else 2)
                     errors.extend(capacity['blockers'])
                 except (Rejected, KeyError, ValueError, TypeError) as error:
                     errors.append('Finish-capacity check failed: ' + str(error))
@@ -554,7 +561,7 @@ class Lifecycle:
                             or prior_assignment['contract_revision'] != contract['revision']
                             or prior_assignment['concept_revision'] != contract['concept_revision']
                             or prior_assignment['concept_digest'] != contract['concept_digest']
-                            or prior_assignment['scope'] != canonical(assignment_scope(contract, 'implementation'))):
+                            or prior_assignment['scope'] != canonical(plan_runtime.expected_scope_in(db, prior_assignment, assignment_scope(contract, 'implementation')))):
                         raise Rejected('startup_continuation', 'The audited predecessor belongs to a different assignment')
                     return self.store._record(db, operation_id, payload, {
                         'work_id': work_id, 'execution': run['execution'],
@@ -569,7 +576,7 @@ class Lifecycle:
             self._touch(db, work_id, 'admitted', {})
             return self.store._record(db, operation_id, payload, {'work_id': work_id, 'execution': 'eligible'})
 
-    def _enqueue(self, db: sqlite3.Connection, work_id: str, kind: str, predecessor: str) -> str | None:
+    def _enqueue(self, db: sqlite3.Connection, work_id: str, kind: str, predecessor: str, *, task_id: str | None = None) -> str | None:
         run, contract = self._run(db, work_id)
         if human_intent.errors_in(db, work_id):
             return None
@@ -580,6 +587,7 @@ class Lifecycle:
             return None
         assignment_id = 'a-' + digest([work_id, predecessor])[7:39]
         timestamp = now()
+        scope = plan_runtime.bind_scope_in(db, work_id, kind, assignment_scope(contract, kind), task_id=task_id)
         self._fault('before_outbox_enqueue')
         db.execute('''INSERT INTO assignment
             (assignment_id,work_id,predecessor,kind,state,contract_revision,concept_revision,concept_digest,candidate,
@@ -587,9 +595,12 @@ class Lifecycle:
              VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (assignment_id, work_id, predecessor, kind, 'proposed', contract['revision'], contract['concept_revision'],
              contract['concept_digest'], run['candidate'], contract['assessor'] if kind == 'assessment' else contract['writer'],
-             contract['model'], contract['effort'], canonical(assignment_scope(contract, kind)),
+             contract['model'], contract['effort'], canonical(scope),
              assignment_id, timestamp, timestamp))
         db.execute('INSERT INTO outbox VALUES(?,?,NULL,?)', (assignment_id, 'pending', timestamp))
+        if 'di_task_id' in scope:
+            self._touch(db, work_id, 'di_assignment_planned', {'assignment_id': assignment_id,
+                        'task_id': scope['di_task_id'], 'scope_digest': digest(scope)})
         return assignment_id
 
     def assignments(self, *, unresolved: bool = False) -> list[dict]:
@@ -1068,10 +1079,9 @@ class Lifecycle:
                 'failed_assignment_id': a['assignment_id'], 'assignment_id': successor,
                 'cycle': run['cycle'], 'charges_preserved': True})
             return 'triage_required'
-        self._deliver_in(db, contract, a, result)
-        return 'delivered'
+        return self._deliver_in(db, contract, a, result, receipt_id)
 
-    def _deliver_in(self, db: sqlite3.Connection, contract: dict, a: sqlite3.Row, result: dict) -> None:
+    def _deliver_in(self, db: sqlite3.Connection, contract: dict, a: sqlite3.Row, result: dict, receipt_id: str) -> str:
         from . import assessment_evidence
         current_intent = human_intent.current_in(db, a['work_id'])
         if (human_intent.errors_in(db, a['work_id']) or
@@ -1079,7 +1089,13 @@ class Lifecycle:
             raise Rejected('human_intent', 'Current instruction or agreed ownership prevents handoff')
         if error := assessment_evidence.completion_error(self, db, a, result):
             raise Rejected('assessment_evidence', error)
-        plan_runtime.advance_in(self, db, a, result)
+        plan_runtime.advance_in(self, db, a, result, receipt_id)
+        successor = plan_runtime.next_task_in(db, a)
+        if successor is not None:
+            db.execute('UPDATE lifecycle SET candidate=? WHERE work_id=?', (canonical(result['candidate']), a['work_id']))
+            db.execute("UPDATE resource SET state='reserved',assignment_id=NULL,observed_at=? WHERE work_id=?", (now(), a['work_id']))
+            queued = self._enqueue(db, a['work_id'], 'implementation', 'completion:' + receipt_id, task_id=successor['id'])
+            return 'milestone_passed' if queued else 'held'
         delivery = {'candidate': result['candidate'], 'accepted': True, 'committed': False, 'installed': False,
                     'released': False, 'receiving_owner': contract['receiving_owner'], 'checks': result['checks'],
                     'limits': 'Q2 bounded runtime candidate; desktop/archive qualification remains separate' if result.get('runtime_turn_id') else 'Q1 simulated acceptance only',
@@ -1087,6 +1103,7 @@ class Lifecycle:
                     'accepted_at': now(), 'assessor': result['executor']}
         db.execute("UPDATE lifecycle SET execution='delivered',admitted=0,delivery=? WHERE work_id=?", (canonical(delivery), a['work_id']))
         db.execute('DELETE FROM resource WHERE work_id=?', (a['work_id'],))
+        return 'delivered'
 
     def _startup_retry_in(self, db: sqlite3.Connection, run: sqlite3.Row, contract: dict,
                           assignment: sqlite3.Row, result: dict, observation: dict | None,
@@ -1189,7 +1206,7 @@ class Lifecycle:
                         error = 'Implementation must freeze an exact candidate and source/new-file inventory'
                     if error is None and a['kind'] in ('implementation', 'repair'):
                         try:
-                            plan_runtime.advance_in(self, db, a, result)
+                            plan_runtime.advance_in(self, db, a, result, receipt_id)
                         except Rejected as problem:
                             error = str(problem)
                     effects_unknown = (result.get('owned_processes') != [] or result.get('effects_reconciled') is not True
@@ -1224,8 +1241,7 @@ class Lifecycle:
                         disposition = 'assessment_required'
                     else:
                         # Acceptance is exclusively the non-author assessor's qualified evidence.
-                        self._deliver_in(db, contract, a, result)
-                        disposition = 'delivered'
+                        disposition = self._deliver_in(db, contract, a, result, receipt_id)
                 if disposition != 'delivered' and run['execution'] != 'paused':
                     blocked = db.execute('SELECT 1 FROM technical_blocker WHERE work_id=?', (a['work_id'],)).fetchone()
                     db.execute('UPDATE lifecycle SET execution=? WHERE work_id=?', ('held' if blocked else 'eligible', a['work_id']))

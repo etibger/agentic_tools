@@ -48,10 +48,12 @@ def attempts_for(db, budget_id: str) -> list[dict]:
 
 def finish_capacity(budget: dict, *, max_repairs: int, max_seconds: int,
                     max_assignments: int, attempts=(), lifecycle_assignments: int = 0,
-                    max_startup_retries: int = 0, reviewed_host: bool = False) -> dict:
+                    max_startup_retries: int = 0, reviewed_host: bool = False,
+                    planned_assignments: int = 2) -> dict:
     """Pure prospective admission check; no reservations or mutable state.
 
-    Each correction needs a repair and its independent reassessment. Reviewed host
+    Every planned writer/assessor task needs a launch. Each correction needs a
+    repair and its independent reassessment. Reviewed host
     validation also keeps one independent failure-triage slot per correction. Explicit
     startup retries add separate charged slots; they never consume review or triage capacity. Retained
     failed/ambiguous attempts consume their original full reservations. Missing
@@ -72,6 +74,7 @@ def finish_capacity(budget: dict, *, max_repairs: int, max_seconds: int,
             or type(max_repairs) is not int or not 0 <= max_repairs <= 2
             or type(max_startup_retries) is not int or not 0 <= max_startup_retries <= 2
             or type(reviewed_host) is not bool
+            or type(planned_assignments) is not int or not 2 <= planned_assignments <= 6
             or type(max_seconds) is not int or max_seconds < 1
             or type(max_assignments) is not int or max_assignments < 1
             or type(lifecycle_assignments) is not int or lifecycle_assignments < 0
@@ -85,7 +88,7 @@ def finish_capacity(budget: dict, *, max_repairs: int, max_seconds: int,
            or item.get('budget_seconds', 300) < 1 for item in retained):
         receipt['blockers'].append('Retained attempt duration is invalid; capacity is unknown')
         return receipt
-    required = 2 + (3 if reviewed_host else 2) * max_repairs + max_startup_retries
+    required = planned_assignments + (3 if reviewed_host else 2) * max_repairs + max_startup_retries
     seconds = sum(item.get('budget_seconds', 300) for item in retained)
     receipt.update(required_assignments=required, required_seconds=required * max_seconds,
                    remaining_assignments=budget['max_assignments'] - len(retained),
@@ -116,7 +119,7 @@ def _budget_identity(budget: dict, source: str | None) -> dict:
 def read_finish_capacity(path: Path, budget: dict, *, source: str, max_repairs: int,
                          max_seconds: int, max_assignments: int,
                          lifecycle_assignments: int = 0, max_startup_retries: int = 0,
-                         reviewed_host: bool = False) -> dict:
+                         reviewed_host: bool = False, planned_assignments: int = 2) -> dict:
     """Read existing accounting without constructing a product runtime or charging it.
 
     An absent runtime journal means no reservations there; it is never created.
@@ -126,7 +129,8 @@ def read_finish_capacity(path: Path, budget: dict, *, source: str, max_repairs: 
     """
     scope = dict(max_repairs=max_repairs, max_seconds=max_seconds,
                  max_assignments=max_assignments, lifecycle_assignments=lifecycle_assignments,
-                 max_startup_retries=max_startup_retries, reviewed_host=reviewed_host)
+                 max_startup_retries=max_startup_retries, reviewed_host=reviewed_host,
+                 planned_assignments=planned_assignments)
     receipt = finish_capacity(budget, **scope)
     if receipt['required_assignments'] is None:
         return receipt

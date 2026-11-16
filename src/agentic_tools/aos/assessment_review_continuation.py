@@ -103,6 +103,10 @@ def _incident(lifecycle, db, work_id, failed_assignment_id, old_contract):
 
 
 def _capacity(lifecycle, db, work_id, contract):
+    from . import plan_runtime
+    latest = db.execute('SELECT * FROM assignment WHERE work_id=? ORDER BY rowid DESC LIMIT 1', (work_id,)).fetchone()
+    if latest is not None and plan_runtime.remaining_jobs_in(db, latest):
+        _reject('Final-assessment continuation cannot skip remaining internal DI tasks; use a continuation with full finish capacity')
     run, _ = lifecycle._run(db, work_id)
     count = db.execute('SELECT count(*) FROM assignment WHERE work_id=?', (work_id,)).fetchone()[0]
     if (contract['max_assignments'] - count != 1 or run['cycle'] != contract['max_repairs']
