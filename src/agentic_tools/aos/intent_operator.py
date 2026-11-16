@@ -97,12 +97,40 @@ class IntentController:
         with self.lock:
             return self.sessions.get(token)
 
-    def issue_form(self, csrf, current):
+    def fresh_work_in(self, db, current):
+        """Recognize only original registration, never reconstruct missing history."""
+        if (current != human_intent.current_in(db, self.work_id)
+                or current.get('policy') != human_intent.POLICY or current.get('disposition') != 'ambiguous'
+                or current.get('controlling_instruction') is not None
+                or any(current.get(key) != [] for key in
+                       ('history', 'current_heads', 'conflicts', 'corroborated_instructions'))
+                or current.get('problems') != ['Current human instruction is missing or conflicting']):
+            return False
+        run, contract = self.lifecycle._run(db, self.work_id)
+        if (contract.get('human_intent_policy') != human_intent.POLICY or current['owner'] != contract['receiving_owner']
+                or run['execution'] != 'held' or run['control'] != 'none' or run['admitted'] != 0 or run['cycle'] != 0
+                or any(run[key] is not None for key in ('candidate', 'delivery', 'resume_execution'))):
+            return False
+        # Retain even completed/recovered input rows and released resources.
+        if any(db.execute('SELECT 1 FROM ' + table + ' WHERE work_id=? LIMIT 1', (self.work_id,)).fetchone()
+               for table in ('human_operator_input', 'assignment', 'resource', 'owned_stop', 'decision')):
+            return False
+        events = db.execute('SELECT kind,detail FROM lifecycle_event WHERE work_id=? ORDER BY event_id',
+                            (self.work_id,)).fetchall()
+        return (len(events) == 1 and events[0]['kind'] == 'contract_registered'
+                and json.loads(events[0]['detail']) == contract)
+
+    def can_begin(self, current):
+        with self.store._connection() as db:
+            db.execute('BEGIN')
+            return self.fresh_work_in(db, current)
+
+    def issue_form(self, csrf, current, *, begin=False):
         with self.lock:
             if len(self.forms) >= 512:
                 raise Rejected('operator_access', 'Restart this foreground listener to renew forms')
             input_id = 'human-' + secrets.token_hex(16)
-            self.forms[input_id] = (csrf, digest(current))
+            self.forms[input_id] = (csrf, digest(current), begin)
             return input_id
 
     def submit(self, fields):
@@ -121,6 +149,14 @@ class IntentController:
                 raise Rejected('operator_replay', 'This form identity already names different original input')
             if prior and prior['result']:
                 return json.loads(prior['result'])
+            if not prior and binding[2]:
+                if (action != 'resume' or fields['reference'] or fields['supersedes']):
+                    raise Rejected('operator_action', 'Begin requires the original empty-history resume form')
+                current = human_intent.current_in(db, self.work_id)
+                # A changed instruction view still follows the existing durable
+                # attempt + record(expected_current) stale-rejection path below.
+                if digest(current) == binding[1] and not self.fresh_work_in(db, current):
+                    raise Rejected('operator_history', 'Fresh-work evidence changed; read current status before acting')
             db.execute('INSERT OR IGNORE INTO human_operator_input VALUES(?,?,?,?,NULL)',
                        (input_id, self.work_id, canonical(payload), now()))
         if prior:
@@ -227,7 +263,7 @@ def handler_for(controller):
 
         def do_GET(self):
             try:
-                if self.path not in {'/', '/?resume=no', '/?stop=no'} or not self.valid_host():
+                if self.path not in {'/', '/?resume=no', '/?stop=no', '/?begin=no'} or not self.valid_host():
                     raise Rejected('operator_access', 'Open the exact operator page')
                 csrf = self.session()
                 if not csrf:
@@ -236,17 +272,25 @@ def handler_for(controller):
                                   '<label>Private operator key <input type="password" name="operator_key" autocomplete="off" required></label>'
                                   '<button>Unlock</button></form>')
                     return
-                current = controller.status()
                 run = controller.store.read(controller.work_id)
+                current = run['lifecycle']['human_intent']
+                begin = controller.can_begin(current)
                 stopped = current['disposition'] in {'stop', 'pause'} and run['execution'] not in TERMINAL_EXECUTIONS
-                status = (run['execution'].capitalize() if run['execution'] in TERMINAL_EXECUTIONS else
+                status = ('Waiting for your first instruction' if begin else
+                          run['execution'].capitalize() if run['execution'] in TERMINAL_EXECUTIONS else
                           current['disposition'].capitalize() + ' instruction in effect' if stopped else
                           'Resume instruction saved' if current['disposition'] == 'running' else
                           'Waiting for instruction review')
                 controls = '<h1>' + escape(run['title']) + '</h1><p>Status: <strong>' + status + '</strong></p>'
-                if self.path in {'/?resume=no', '/?stop=no'}:
-                    action = 'resume' if self.path == '/?resume=no' else 'stop'
-                    controls += '<p>No ' + action + ' instruction was submitted. The latest saved instruction remains in effect.</p>'
+                if self.path in {'/?resume=no', '/?stop=no', '/?begin=no'}:
+                    action = self.path[2:].split('=', 1)[0]
+                    controls += ('<p>No begin instruction was submitted. Existing instruction and execution holds still apply.</p>'
+                                 if action == 'begin' else
+                                 '<p>No ' + action + ' instruction was submitted. The latest saved instruction remains in effect.</p>')
+                elif begin:
+                    controls += '<h2>Begin this work?</h2><p>Yes saves your first instruction to begin. Separate approval and other checks still apply.</p>'
+                    controls += self.confirmation_form(csrf, current, 'resume', begin=True)
+                    controls += '<p><a href="/?begin=no">No</a></p>'
                 elif stopped:
                     title = run['title'].casefold()
                     question = ('Resume the disposable AOS qualification work?' if 'disposable' in title and 'qualification' in title
@@ -268,9 +312,9 @@ def handler_for(controller):
             except (Rejected, OSError, ValueError, KeyError, sqlite3.Error, CookieError):
                 self.response(HTTPStatus.SERVICE_UNAVAILABLE, '<h1>Controls unavailable</h1><p>Read current evidence before acting. No instruction was inferred.</p>')
 
-        def confirmation_form(self, csrf, current, action):
-            values = {'csrf': csrf, 'input_id': controller.issue_form(csrf, current), 'action': action,
-                      'owner': current['owner'], 'reference': current['controlling_instruction'],
+        def confirmation_form(self, csrf, current, action, *, begin=False):
+            values = {'csrf': csrf, 'input_id': controller.issue_form(csrf, current, begin=begin), 'action': action,
+                      'owner': current['owner'], 'reference': current['controlling_instruction'] or '',
                       'supersedes': ' '.join(current['current_heads'])}
             hidden = ''.join('<input type="hidden" name="' + k + '" value="' + escape(v, quote=True) + '">' for k, v in values.items())
             return ('<form method="post" action="/instruction">' + hidden
@@ -318,7 +362,8 @@ def handler_for(controller):
                 if fields['action'] in {'resume', 'stop'} and not result.get('interrupted'):
                     current = controller.status()
                     if fields['action'] == 'resume' and current['disposition'] == 'running':
-                        message = 'Your resume instruction is saved. Separate approval and other checks still apply.'
+                        message = ('Your instruction to begin is saved.' if controller.forms[fields['input_id']][2]
+                                   else 'Your resume instruction is saved.') + ' Separate approval and other checks still apply.'
                     elif fields['action'] == 'stop' and current['disposition'] == 'stop':
                         message = 'Your stop instruction is saved. Active work may still need cleanup.'
                     else:

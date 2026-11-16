@@ -17,12 +17,21 @@ from agentic_tools.aos import human_intent
 from agentic_tools.aos.intent_operator import IntentService
 from agentic_tools.aos.lifecycle import Lifecycle
 from agentic_tools.aos.store import Rejected, Store
-from test_aos_lifecycle import setup
+from test_aos_lifecycle import approve, setup
 
 
 @pytest.fixture
 def fixture(tmp_path, request):
-    store, lifecycle, _ = setup(tmp_path, admitted=False, approved=getattr(request, 'param', True))
+    return https_fixture(tmp_path, approved=getattr(request, 'param', True))
+
+
+@pytest.fixture
+def fresh_fixture(tmp_path):
+    return https_fixture(tmp_path, approved=False, human_intent_policy=human_intent.POLICY)
+
+
+def https_fixture(tmp_path, *, approved=True, **contract):
+    store, lifecycle, _ = setup(tmp_path, admitted=False, approved=approved, **contract)
     setup(tmp_path, store=store, work_id='OTHER', admitted=False)
     key, cert = store.directory / 'tls.key', store.directory / 'tls.crt'
     subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
@@ -97,15 +106,199 @@ def running(fixture):
     assert service.cleanup == {'listener_stopped': True, 'requests_stopped': True}
 
 
-def confirmation_fields(page, action='resume'):
+def confirmation_fields(page, action='resume', *, choice=None):
     """Use only the actual public form, with no synthetic maintenance seam."""
     inputs = re.findall(r'<input\b([^>]*)>', page)
     assert len(inputs) == 6 and all('type="hidden"' in item for item in inputs)
     fields = {name: unescape(value) for name, value in re.findall(r'<input[^>]*name="([^"]+)"[^>]*value="([^"]*)"', page)}
     assert set(fields) == {'csrf', 'input_id', 'action', 'owner', 'reference', 'supersedes'}
     assert fields['action'] == action and '<textarea' not in page
-    assert '<button>Yes</button>' in page and page.index('</form>') < page.index('href="/?' + action + '=no"')
+    assert '<button>Yes</button>' in page and page.index('</form>') < page.index('href="/?' + (choice or action) + '=no"')
     return fields
+
+
+def original_instruction(lifecycle, instruction_id, action='stop', *, scope=None, supersedes=None, **changes):
+    """Explicitly synthetic original evidence; never a claimed human click."""
+    capability = lifecycle.store.host_capability('SIMULATED fresh-work test', 'SIMULATED original input')
+    return human_intent.record(lifecycle, {
+        'instruction_id': instruction_id, 'human_reference': 'SIMULATED:' + instruction_id,
+        'source_kind': 'direct_human', 'scope': scope or ['Q1'], 'action': action,
+        'supersedes': supersedes or [], 'provenance_available': True, 'context': 'original', **changes,
+    }, capability=capability)
+
+
+def unsafe_fresh_evidence(lifecycle, kind):
+    """Reconstructed unsafe fixtures; SQL labels are not actual execution proof."""
+    store = lifecycle.store
+    if kind == 'decision':
+        approve(store, store.read('Q1')['concepts'][-1])
+        return
+    with store._transaction() as db:
+        if kind in {'pending_input', 'recovered_input', 'completed_input'}:
+            result = {'interrupted': True, 'instruction_retained': False} if kind == 'recovered_input' else {'message': 'retained original receipt'}
+            db.execute('INSERT INTO human_operator_input VALUES(?,?,?,?,?)',
+                       ('prior-input', 'Q1', '{}', 'SIMULATED', None if kind == 'pending_input' else json.dumps(result)))
+        elif kind in {'paused', 'active', 'eligible', 'cancelled', 'delivered', 'retired'}:
+            db.execute("UPDATE lifecycle SET execution=? WHERE work_id='Q1'", (kind,))
+        elif kind in {'admitted', 'cycle'}:
+            db.execute('UPDATE lifecycle SET ' + kind + "=1 WHERE work_id='Q1'")
+        elif kind in {'control', 'candidate', 'delivery', 'resume_execution'}:
+            db.execute('UPDATE lifecycle SET ' + kind + "=? WHERE work_id='Q1'",
+                       ('cancel_requested' if kind == 'control' else 'held' if kind == 'resume_execution' else '{}',))
+        elif kind == 'owner':
+            db.execute("UPDATE human_intent_scope SET owner='different-owner' WHERE work_id='Q1'")
+        elif kind == 'contract_policy':
+            _, contract = lifecycle._run(db, 'Q1')
+            contract.pop('human_intent_policy')
+            db.execute("UPDATE lifecycle SET contract=? WHERE work_id='Q1'", (json.dumps(contract),))
+        elif kind == 'assignment':
+            db.execute("""INSERT INTO assignment(assignment_id,work_id,predecessor,kind,state,contract_revision,
+                concept_revision,concept_digest,executor,requested_model,requested_effort,scope,attempt_id,created_at,eligible_at)
+                VALUES('prior-assignment','Q1','prior','implementation','completed',1,1,'SIMULATED:digest',
+                'writer','gpt-6.1-sol','high','{}','prior-attempt','SIMULATED','SIMULATED')""")
+        elif kind == 'resource':
+            db.execute("INSERT INTO resource VALUES('prior-resource','Q1',NULL,'released','SIMULATED')")
+        elif kind == 'owned_stop':
+            db.execute("INSERT INTO owned_stop VALUES('prior-attempt','Q1','prior stop','stopped','SIMULATED',NULL,NULL)")
+        elif kind == 'event':
+            lifecycle._touch(db, 'Q1', 'launch_intent', {'prior_effects': 'unavailable'})
+        else:
+            raise AssertionError(kind)
+
+
+def test_fresh_begin_yes_no_records_first_original_without_approval_or_execution(fresh_fixture):
+    store, lifecycle, _ = fresh_fixture
+    capability = store.host_capability('SIMULATED unrelated setup', 'SIMULATED original input')
+    human_intent.enable(lifecycle, 'OTHER', 'fixture-owner', capability=capability)
+    original_instruction(lifecycle, 'unrelated-stop', scope=['OTHER'])
+    other = store.read('OTHER')
+    with running(fresh_fixture) as (browser, lifecycle):
+        before = store.read('Q1')
+        status, page = browser.request()
+        assert status == 200 and '<h2>Begin this work?</h2>' in page
+        assert '<h1>' + before['title'] + '</h1>' in page
+        fields = confirmation_fields(page, choice='begin')
+        assert fields['owner'] == 'fixture-owner' and fields['reference'] == fields['supersedes'] == ''
+        visible = re.sub(r'<input[^>]*>', '', page.split('<details>', 1)[0])
+        assert fields['input_id'] not in visible and 'fixture-owner' not in visible
+        assert 'Separate approval and other checks still apply.' in visible
+        assert 'No begin instruction was submitted.' in browser.request('GET', '/?begin=no')[1]
+        assert '<form' not in browser.request('GET', '/?begin=no')[1]
+        assert '<h2>Begin this work?</h2>' in browser.request()[1]
+        with store._connection() as db:
+            assert db.execute('SELECT count(*) FROM human_operator_input').fetchone()[0] == 0
+        assert store.read('Q1')['revision'] == before['revision']
+        result = browser.submit(fields, Origin='null')
+        assert 'Your instruction to begin is saved.' in result
+        after = store.read('Q1')
+        assert after['execution'] == 'held' and after['lifecycle']['control'] == 'none'
+        assert after['decisions'] == after['lifecycle']['assignments'] == after['lifecycle']['resources'] == []
+        assert after['lifecycle']['human_intent']['controlling_instruction'] == fields['input_id']
+        assert after['lifecycle']['human_intent']['owner'] == fields['owner']
+        with store._connection() as db:
+            rows = db.execute('SELECT evidence FROM human_instruction WHERE instruction_id=?', (fields['input_id'],)).fetchall()
+            assert len(rows) == 1
+            evidence = json.loads(rows[0][0])
+            assert {key: evidence[key] for key in ('source_kind', 'scope', 'action', 'supersedes', 'context', 'provenance_available')} == {
+                'source_kind': 'direct_human', 'scope': ['Q1'], 'action': 'resume', 'supersedes': [],
+                'context': 'original', 'provenance_available': True}
+        assert browser.submit(fields) == result
+        assert store.read('Q1')['revision'] == after['revision']
+        stop = confirmation_fields(browser.request()[1], 'stop')
+        browser.submit(stop)
+        stopped = store.read('Q1')
+        historical = browser.submit(fields)
+        assert 'Your instruction to begin is saved.' not in historical
+        assert 'latest saved instruction determines the hold' in historical
+        assert store.read('Q1')['revision'] == stopped['revision']
+        assert lifecycle.snapshot('Q1')['human_intent']['controlling_instruction'] == stop['input_id']
+        assert '<h2>Begin this work?</h2>' not in browser.request()[1]
+    assert store.read('OTHER')['revision'] == other['revision']
+    assert store.read('OTHER')['decisions'] == other['decisions']
+
+
+@pytest.mark.parametrize('kind', ['pending_input', 'recovered_input', 'completed_input', 'paused', 'active', 'eligible',
+                                 'cancelled', 'delivered', 'retired', 'admitted', 'cycle', 'control', 'candidate',
+                                 'delivery', 'resume_execution', 'owner', 'contract_policy', 'assignment', 'resource',
+                                 'owned_stop', 'event', 'decision'])
+def test_begin_is_absent_for_retained_input_or_prior_effects(fresh_fixture, kind):
+    store, _, _ = fresh_fixture
+    with running(fresh_fixture) as (browser, lifecycle):
+        unsafe_fresh_evidence(lifecycle, kind)
+        before = store.read('Q1')
+        status, page = browser.request()
+        assert status == 200 and '<h2>Begin this work?</h2>' not in page and '<form' not in page
+        assert store.read('Q1')['revision'] == before['revision']
+        assert store.read('Q1')['lifecycle']['human_intent'] == before['lifecycle']['human_intent']
+
+
+@pytest.mark.parametrize('kind', ['pending_input', 'recovered_input', 'resource', 'event', 'decision'])
+def test_begin_rechecks_freshness_after_render_before_inserting_original_input(fresh_fixture, kind):
+    store, _, _ = fresh_fixture
+    with running(fresh_fixture) as (browser, lifecycle):
+        fields = confirmation_fields(browser.request()[1], choice='begin')
+        current = lifecycle.snapshot('Q1')['human_intent']
+        unsafe_fresh_evidence(lifecycle, kind)
+        assert lifecycle.snapshot('Q1')['human_intent'] == current
+        before = store.read('Q1')
+        browser.submit(fields, expected=409)
+        assert store.read('Q1')['revision'] == before['revision']
+        assert lifecycle.snapshot('Q1')['human_intent'] == current
+        with store._connection() as db:
+            assert not db.execute('SELECT 1 FROM human_instruction WHERE instruction_id=?', (fields['input_id'],)).fetchone()
+            assert not db.execute('SELECT 1 FROM human_operator_input WHERE input_id=?', (fields['input_id'],)).fetchone()
+
+
+@pytest.mark.parametrize('scope', [['Q1'], ['*']])
+def test_stop_arriving_after_begin_fences_yes_and_retains_the_stale_attempt(fresh_fixture, scope):
+    store, _, _ = fresh_fixture
+    with running(fresh_fixture) as (browser, lifecycle):
+        fields = confirmation_fields(browser.request()[1], choice='begin')
+        original_instruction(lifecycle, 'later-stop', scope=scope)
+        current = lifecycle.snapshot('Q1')['human_intent']
+        browser.submit(fields, expected=409)
+        assert current['disposition'] == 'stop' and current['controlling_instruction'] == 'later-stop'
+        assert lifecycle.snapshot('Q1')['human_intent'] == current
+        with store._connection() as db:
+            assert db.execute('SELECT 1 FROM human_operator_input WHERE input_id=?', (fields['input_id'],)).fetchone()
+            assert not db.execute('SELECT 1 FROM human_instruction WHERE instruction_id=?', (fields['input_id'],)).fetchone()
+        assert 'instruction to begin is saved' not in browser.submit(fields)
+        assert lifecycle.snapshot('Q1')['human_intent'] == current
+        assert '<h2>Begin this work?</h2>' not in browser.request()[1]
+
+
+@pytest.mark.parametrize('kind', ['local_stop', 'global_stop', 'global_resume', 'unverified', 'missing_predecessor', 'heads', 'related_conflict'])
+def test_begin_never_reinterprets_applicable_original_or_ambiguous_evidence(fresh_fixture, kind):
+    with running(fresh_fixture) as (browser, lifecycle):
+        if kind == 'related_conflict':
+            original_instruction(lifecycle, 'original', scope=['OTHER'])
+            original_instruction(lifecycle, 'original', scope=['Q1'])
+        else:
+            original_instruction(lifecycle, 'original', action='resume' if kind in {'global_resume', 'unverified', 'missing_predecessor'} else 'stop',
+                                 scope=['*'] if kind.startswith('global') else ['Q1'],
+                                 supersedes=['unavailable-original'] if kind == 'missing_predecessor' else [],
+                                 provenance_available=kind != 'unverified', context='reconstructed' if kind == 'unverified' else 'original')
+            if kind == 'heads':
+                original_instruction(lifecycle, 'unordered-resume', action='resume')
+        before = lifecycle.snapshot('Q1')['human_intent']
+        page = browser.request()[1]
+        assert '<h2>Begin this work?</h2>' not in page
+        if kind in {'unverified', 'missing_predecessor', 'heads', 'related_conflict'}:
+            assert before['disposition'] == 'ambiguous' and '<form' not in page
+        assert lifecycle.snapshot('Q1')['human_intent'] == before
+
+
+@pytest.mark.parametrize('changes', [{'owner': 'different-owner'}, {'work_id': 'OTHER'}, {'csrf': 'wrong'},
+                                   {'supersedes': 'invented'}, {'reference': 'invented'}, {'action': 'stop'}])
+def test_begin_preserves_exact_scope_owner_and_session_bindings(fresh_fixture, changes):
+    store, _, _ = fresh_fixture
+    with running(fresh_fixture) as (browser, lifecycle):
+        fields = confirmation_fields(browser.request()[1], choice='begin')
+        current = lifecycle.snapshot('Q1')['human_intent']
+        browser.submit({**fields, **changes}, expected=409)
+        assert lifecycle.snapshot('Q1')['human_intent'] == current
+        assert store.read('Q1')['execution'] == 'held'
+        assert store.read('Q1')['decisions'] == []
 
 
 @pytest.mark.parametrize('action', ['stop', 'pause'])
