@@ -10,6 +10,7 @@ import sqlite3
 import stat
 import subprocess
 import tempfile
+import time
 from . import native_paths
 from .store import Rejected, canonical, digest
 
@@ -73,22 +74,31 @@ def _artifact_bytes(path, roots=()):
     return raw
 
 
-def _git(source, args, *, data=None, limit=MAX_TREE_BYTES, allowed=(0,)):
+def _remaining(deadline):
+    remaining = 60 if deadline is None else min(60, deadline - time.monotonic())
+    if remaining <= 0:
+        _reject('Source evidence verification exceeded its observation deadline')
+    return remaining
+
+
+def _git(source, args, *, data=None, limit=MAX_TREE_BYTES, allowed=(0,), deadline=None):
     env = {'HOME': str(Path.home()), 'PATH': '/usr/bin:/bin:/usr/sbin:/sbin', 'LANG': 'C',
            'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_NO_LAZY_FETCH': '1', 'GIT_OPTIONAL_LOCKS': '0', 'GIT_NO_REPLACE_OBJECTS': '1'}
     run = subprocess.run(['/usr/bin/git', '-c', 'core.fsmonitor=false', '--no-pager', *args], cwd=source,
-                         input=data, capture_output=True, timeout=60, env=env)
+                         input=data, capture_output=True, timeout=_remaining(deadline), env=env)
+    _remaining(deadline)
     if run.returncode not in allowed or len(run.stdout) > limit or len(run.stderr) > 65536:
         _reject('Bounded read-only Git extraction failed')
     return run.stdout
 
 
-def _tree(source, git_base, baseline):
+def _tree(source, git_base, baseline, *, deadline=None):
     if not re.fullmatch('[a-f0-9]{40}', git_base): _reject('Exact committed Git base required')
-    if _git(source, ['rev-parse','--verify','HEAD']).decode().strip() != git_base:
+    if _git(source, ['rev-parse','--verify','HEAD'], deadline=deadline).decode().strip() != git_base:
         _reject('Checkout HEAD differs from review base')
     manifest, order, total = {}, [], 0
-    for row in _git(source,['ls-tree','-rlz','--full-tree',git_base],limit=4*1024*1024).split(b'\0'):
+    for row in _git(source,['ls-tree','-rlz','--full-tree',git_base],limit=4*1024*1024,deadline=deadline).split(b'\0'):
+        _remaining(deadline)
         if not row: continue
         header, name = row.split(b'\t',1); mode, kind, oid, size = header.decode('ascii').split()
         path=name.decode('utf-8'); _path(path); length=int(size); total+=length
@@ -98,9 +108,10 @@ def _tree(source, git_base, baseline):
             _reject('Committed baseline exceeds evidence limits')
         manifest[path]={'mode':mode,'oid':oid,'size':length};order.append(path)
     if set(baseline)!=set(manifest)|{'.git'}: _reject('Baseline must equal committed tree plus worktree pointer')
-    raw=_git(source,['cat-file','--batch'],data=''.join(manifest[p]['oid']+'\n' for p in order).encode(),limit=total+len(order)*128)
+    raw=_git(source,['cat-file','--batch'],data=''.join(manifest[p]['oid']+'\n' for p in order).encode(),limit=total+len(order)*128,deadline=deadline)
     offset,blobs=0,{}
     for path in order:
+        _remaining(deadline)
         end=raw.index(b'\n',offset);fields=raw[offset:end].decode('ascii').split();item=manifest[path]
         if fields!=[item['oid'],'blob',str(item['size'])]: _reject('Git returned a different baseline blob')
         offset=end+1;blob=raw[offset:offset+item['size']];offset+=item['size']
@@ -115,10 +126,11 @@ def _tree(source, git_base, baseline):
     return manifest,blobs
 
 
-def _current(source,names):
+def _current(source,names,*,deadline=None):
     if len(names) > MAX_PATHS: _reject('Candidate path count exceeds evidence limit')
     values,modes,total={},{},0
     for name in names:
+        _remaining(deadline)
         _path(name);path=source/name;info=path.lstat()
         total += info.st_size
         if info.st_size > MAX_BLOB_BYTES or total > MAX_TREE_BYTES:
@@ -130,6 +142,7 @@ def _current(source,names):
         else: _reject('Source evidence requires regular files or source links')
         if len(raw) != info.st_size: _reject('Candidate changed while reading source content')
         values[name],modes[name]=raw,mode
+        _remaining(deadline)
     return values,modes
 
 
@@ -152,7 +165,7 @@ def _decode(value):
     return raw
 
 
-def _patch(changes,directory):
+def _patch(changes,directory,*,deadline=None):
     """Use raw snapshots, avoiding index state and repository filters."""
     with tempfile.TemporaryDirectory(prefix='source-review-',dir=directory) as scratch:
         root=Path(scratch)
@@ -161,13 +174,14 @@ def _patch(changes,directory):
             if any(any(str(p) in names for p in _path(n).parents if str(p)!='.') for n in names):
                 _reject('Source evidence paths overlap a file or link')
             for change in changes:
+                _remaining(deadline)
                 content=change[side]
                 if content is None: continue
                 target=root/side/change['path'];target.parent.mkdir(parents=True,exist_ok=True);raw=_decode(content)
                 if content['kind']=='symlink': os.symlink(os.fsdecode(raw),target)
                 else: target.write_bytes(raw);target.chmod(0o755 if content['mode']=='100755' else 0o644)
         raw = _git(root,['-c','core.attributesfile=/dev/null','diff','--no-index','--binary','--full-index',
-            '--no-ext-diff','--no-textconv','--','old','new'],allowed=(0,1),limit=MAX_BYTES)
+            '--no-ext-diff','--no-textconv','--','old','new'],allowed=(0,1),limit=MAX_BYTES,deadline=deadline)
         try:
             return raw.decode('utf-8')
         except UnicodeDecodeError:
@@ -204,8 +218,9 @@ def build(source,baseline,frozen,*,work_id,baseline_assignment_id,git_base,desti
             **{k:evidence[k] for k in ('work_id','baseline_identity','candidate_identity','git_base')}}
 
 
-def validate(descriptor,*,source,baseline_identity,candidate,work_id,recipe=None,writable_roots=()):
+def validate(descriptor,*,source,baseline_identity,candidate,work_id,recipe=None,writable_roots=(),deadline=None):
     from .codex_runtime import inventory
+    _remaining(deadline)
     if (not isinstance(descriptor,dict) or set(descriptor)!=DESCRIPTOR_KEYS or descriptor['format']!=DESCRIPTOR_FORMAT
         or descriptor['work_id']!=work_id or descriptor['baseline_identity']!=baseline_identity
         or descriptor['candidate_identity']!=candidate['identity'] or not re.fullmatch('[a-f0-9]{64}',descriptor['sha256'])
@@ -217,24 +232,26 @@ def validate(descriptor,*,source,baseline_identity,candidate,work_id,recipe=None
         or any(evidence.get(k)!=descriptor[k] for k in ('work_id','baseline_identity','candidate_identity','git_base'))
         or digest(baseline)!=baseline_identity or digest(current)!=candidate['identity'] or current!=candidate['inventory']
         or candidate.get('source_identity')!=candidate['identity'] or len(baseline)>MAX_PATHS or len(current)>MAX_PATHS
-        or not evidence.get('baseline_assignment_id') or inventory(source,recipe=recipe)!=current):
+        or not evidence.get('baseline_assignment_id') or inventory(source,recipe=recipe,check_deadline=lambda: _remaining(deadline))!=current):
         _reject('Evidence does not bind original baseline and fresh frozen candidate')
     tree=evidence['git_tree']
-    actual_tree, _ = _tree(source, descriptor['git_base'], baseline)
+    actual_tree, _ = _tree(source, descriptor['git_base'], baseline, deadline=deadline)
     if tree != actual_tree: _reject('Evidence tree differs from the exact committed baseline')
     if set(tree)|{'.git'}!=set(baseline) or set(evidence['candidate_modes'])!=set(current): _reject('Evidence omits source paths')
     for name,item in tree.items():
+        _remaining(deadline)
         _path(name)
         if (set(item)!={'mode','oid','size','sha256'} or item['mode'] not in ('100644','100755','120000')
             or not re.fullmatch('[a-f0-9]{40}',item['oid']) or not 0<=item['size']<=MAX_BLOB_BYTES
             or baseline[name]!=('symlink:' if item['mode']=='120000' else '')+item['sha256']):
             _reject('Committed tree manifest differs from original baseline')
-    new,modes=_current(source,current)
+    new,modes=_current(source,current,deadline=deadline)
     if modes!=evidence['candidate_modes']: _reject('Candidate file modes changed')
     expected=sorted(n for n in baseline.keys()|current.keys() if baseline.get(n)!=current.get(n)
                     or n in tree and n in modes and tree[n]['mode']!=modes[n]);changes=evidence['changes']
     if [c.get('path') for c in changes]!=expected or '.git' in expected: _reject('Evidence omits, duplicates or adds changes')
     for change in changes:
+        _remaining(deadline)
         name=change['path'];_path(name);kind='added' if name not in baseline else 'deleted' if name not in current else 'modified'
         if set(change)!={'path','kind','old','new'} or change['kind']!=kind: _reject('Changed-path classification differs')
         for side,hashes in (('old',baseline),('new',current)):
@@ -246,7 +263,7 @@ def validate(descriptor,*,source,baseline_identity,candidate,work_id,recipe=None
             if expected_hash!=hashes[name] or side=='new' and blob!=new[name]: _reject('Changed content differs from exact inventory')
             if content['mode']!=(tree[name]['mode'] if side=='old' else modes[name]): _reject('Changed content mode differs')
     if not evidence.get('limits'): _reject('Patch data and limitations required')
-    if evidence['git_patch'] != _patch(changes, Path(descriptor['path']).parent):
+    if evidence['git_patch'] != _patch(changes, Path(descriptor['path']).parent, deadline=deadline):
         _reject('Patch differs from the exact changed source bytes')
     return evidence
 
@@ -282,8 +299,10 @@ def seed(descriptor,run_outputs,**kwargs):
 
 
 def verify_copy(bound,run_outputs,**kwargs):
+    _remaining(kwargs.get('deadline'))
     if not isinstance(bound,dict) or set(bound)!={'path','sha256','descriptor'}: _reject('Retained source review binding missing')
     descriptor=bound['descriptor'];evidence=validate(descriptor,**kwargs);expected=Path(run_outputs)/FILENAME
     if bound['path']!=str(expected) or bound['sha256']!=descriptor['sha256'] or _sha(_artifact_bytes(expected))!=bound['sha256']:
         _reject('Scoped source review evidence changed')
+    _remaining(kwargs.get('deadline'))
     return evidence

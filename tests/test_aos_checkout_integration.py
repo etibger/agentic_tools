@@ -106,6 +106,22 @@ def fail_external(*args, **kwargs):
     raise DispatchReached()
 
 
+def test_retry_resource_observation_uses_remaining_grace_and_retains_failure(isolated, monkeypatch):
+    p = isolated
+    item = record(p, resource_state=resources())
+    end = module.time.monotonic() + .2
+    observed = []
+    def observe(recipe, *, deadline):
+        observed.append(deadline)
+        assert deadline <= end
+        raise Rejected('checkout_deadline', 'SIMULATED observation exhausted its passed deadline')
+    monkeypatch.setattr(checkout_runtime, 'observe_resources', observe)
+    with pytest.raises(Rejected, match='passed deadline'):
+        p.runtime._resource_sample(item, p.recipe, force=True, deadline_monotonic=end)
+    assert observed == [end]
+    assert p.runtime._get(item['attempt_id'])['checkout_resources']['breach']['code'] == 'checkout_deadline'
+
+
 def test_exact_checkout_recipe_requires_both_saved_policy_markers(isolated):
     p = isolated
     assert p.runtime._recipe(p.assignment) is p.recipe
@@ -266,7 +282,7 @@ def test_active_poll_does_not_start_continuous_or_repeated_resource_scans(isolat
     monkeypatch.setattr(p.runtime, '_resource_sample', lambda *args, **kwargs: pytest.fail('Polling sampled resources'))
     monkeypatch.setattr(p.runtime, '_client', lambda *args, **kwargs: object())
     monkeypatch.setattr(p.runtime, '_events', lambda *args: None)
-    monkeypatch.setattr(p.runtime, '_read_turn', lambda *args: {'status': 'inProgress'})
+    monkeypatch.setattr(p.runtime, '_read_turn', lambda *args, **kwargs: {'status': 'inProgress'})
     for _ in range(3): assert p.runtime.poll(item['attempt_id'])['state'] == 'active'
     assert p.runtime._resource_monitors == {}
 

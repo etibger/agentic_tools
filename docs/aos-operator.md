@@ -385,6 +385,14 @@ Exactly one allowance is required in the approved envelope. `shared_qualificatio
 
 There is no default product allowance. Both allowance types use the original `codex-runtime.sqlite3` ledger. Historical attempts without budget metadata remain charged to the original qualification allowance, using the original full 300-second reservation when duration metadata is absent. Every failed or ambiguous launched intent keeps its slot and full reservation. Product ID and canonical source are durably bound to one allowance; renaming work, a budget, a source or a revision, restarting, or retrying cannot reset it. Different approved products retain separate totals. Product limits cannot be enlarged through this interface after first reservation; a future extension protocol requires separately defined authority. Restore copies remain dispatch-held and never reset runtime sidecars.
 
+### First status read after an acknowledged turn
+
+The runtime can repeat only the same `thread/read` after a durably saved turn acknowledgement when the correlated RPC rejection says exactly `list_turns is not supported yet`. It permits at most three total reads for this failure, with 100 ms and 400 ms backoffs, within a fixed five-second grace. The original assignment deadline minus its cleanup reserve also bounds the grace and each extra read's timeout. These are observation retries: they create no thread, turn, reservation or startup retry allowance and perform no resume operation.
+
+The runtime journal retains `first_status_read_retry` with the exact thread/turn IDs, consumed read count, fixed wall and monotonic deadlines, original rejections and outcome. Reconnect cannot refresh those limits. Cancellation, current authority, dependency/review evidence, source scope and resource guards are checked before each retry and before publishing its result. A saved in-flight read with no outcome, exhausted grace/count, another error, invalid identity or malformed reply holds the attempt for ordinary reconciliation and cleanup. Cleanup reads themselves never use this retry. Once a status read succeeds, later errors use the existing conservative handling. The separate acknowledged empty-rollout waiting behavior remains available on its existing path.
+
+A successful repeat establishes that the exact saved turn became readable. It does not explain the original rejection or establish successful model work, native checks or delivery. Inspect the retained errors and actual terminal evidence before drawing those conclusions.
+
 ## Maintained dashboard process
 
 The dashboard service reads the same ledger through the existing snapshot collector and projection. It does not reconcile workflow state, launch workers, record decisions or publish history. Explicitly start it in a foreground terminal after the selected work exists:

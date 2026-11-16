@@ -263,7 +263,7 @@ def test_last_native_result_cannot_accept_changed_history(case, monkeypatch):
         Path(record['reassessment_evidence']['path']).write_text('{}')
         return {'status': 'completed', **clean}
     monkeypatch.setattr(p.runtime, '_events', lambda *_: None)
-    monkeypatch.setattr(p.runtime, '_read_turn', lambda *_: {'status': 'completed'})
+    monkeypatch.setattr(p.runtime, '_read_turn', lambda *_, **__: {'status': 'completed'})
     monkeypatch.setattr(p.runtime, '_reconcile', reconcile)
     monkeypatch.setattr(p.runtime, '_result', last_result)
     monkeypatch.setattr(p.runtime, '_finish_stop', lambda *a: copy.deepcopy(clean))

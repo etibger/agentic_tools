@@ -373,6 +373,11 @@ class CodexRuntime:
                 # Startup/poll snapshots may predate a monitor or timer stop.
                 # Once saved, this launch fence never regresses to false.
                 record['native_cancel_requested'] = True
+            # Only the compare-and-swap status reader may advance this ledger.
+            # Event/resource snapshots and reconnect must never replenish it.
+            for key in ('first_status_read_retry', 'status_readable_at'):
+                if key in previous:
+                    record[key] = copy.deepcopy(previous[key])
             db.execute('UPDATE attempt SET record=? WHERE id=?', (canonical(record), record['attempt_id']))
 
     @staticmethod
@@ -606,14 +611,14 @@ class CodexRuntime:
                 'candidate': json.loads(assignment['candidate']), 'work_id': assignment['work_id'],
                 'recipe': recipe, 'writable_roots': self.lifecycle.store.worker_writable_roots}
 
-    def _verify_source_review(self, record: dict, recipe: dict) -> None:
+    def _verify_source_review(self, record: dict, recipe: dict, *, deadline=None) -> None:
         descriptor = recipe.get('source_review_evidence')
         bound = record.get('source_review_evidence')
         if descriptor is None and bound is None:
             return
         if descriptor is None or not isinstance(bound, dict) or bound.get('descriptor') != descriptor:
             raise Rejected('source_review_evidence', 'Retained source evidence differs from the approved recipe')
-        source_review_evidence.verify_copy(bound, Path(record['run_outputs']),
+        source_review_evidence.verify_copy(bound, Path(record['run_outputs']), deadline=deadline,
                                           **self._source_review_kwargs(record['assignment'], recipe))
 
     def _budget(self, assignment: dict) -> dict:
@@ -821,13 +826,13 @@ class CodexRuntime:
             raise Rejected('runtime_review', 'Failure evidence exceeds the bounded triage context')
         return payload
 
-    def _assessment_review_feedback(self, assignment: dict) -> dict | None:
+    def _assessment_review_feedback(self, assignment: dict, *, deadline=None) -> dict | None:
         """Bind review phase and corrective history before reserving a new job."""
         recipe = self.recipes[assignment['work_id']]
         if assignment['kind'] != 'assessment' or not checkout_boundary.enabled(recipe):
             return None
         context = self.lifecycle.assessment_review_context(assignment['assignment_id'])
-        return self._review_feedback(assignment, recipe, context)
+        return self._review_feedback(assignment, recipe, context, deadline=deadline)
 
     def _review_feedback(self, assignment, recipe, context, *, preparation_assignment=None, deadline=None):
         """Render a verified live or dependency-bound historical review context."""
@@ -867,11 +872,13 @@ class CodexRuntime:
             raise Rejected('runtime_review', 'Corrective history exceeds the bounded reassessment context')
         return payload
 
-    def _dependency_feedback(self, assignment):
+    def _dependency_feedback(self, assignment, *, deadline=None):
         recipe = self.recipes[assignment['work_id']]
         if self.lifecycle is None or not checkout_boundary.enabled(recipe):
             return None
         end = self._checkout_preparation_deadline(assignment, recipe)
+        if deadline is not None:
+            end = min(end, deadline)
         context = self.lifecycle.dependency_review_context(assignment['assignment_id'])
         if context is None or not context['ancestors']:
             return None
@@ -926,8 +933,8 @@ class CodexRuntime:
                 raise Rejected('dependency_evidence', 'Required prerequisite evidence exceeds the 256 KiB bounded context')
         return payload
 
-    def _verify_dependency_evidence(self, record):
-        current = self._dependency_feedback(record['assignment'])
+    def _verify_dependency_evidence(self, record, *, deadline=None):
+        current = self._dependency_feedback(record['assignment'], deadline=deadline)
         if record.get('dependency_feedback') != current:
             raise Rejected('dependency_evidence', 'Exact prerequisite evidence changed or was not supplied to this attempt')
         if current is None:
@@ -940,9 +947,9 @@ class CodexRuntime:
                 or bound.get('sha256') != hashlib.sha256(expected).hexdigest()):
             raise Rejected('dependency_evidence', 'The scoped prerequisite evidence copy changed')
 
-    def _verify_assessment_review(self, record: dict, recipe: dict) -> None:
-        self._verify_dependency_evidence(record)
-        current = self._assessment_review_feedback(record['assignment'])
+    def _verify_assessment_review(self, record: dict, recipe: dict, *, deadline=None) -> None:
+        self._verify_dependency_evidence(record, deadline=deadline)
+        current = self._assessment_review_feedback(record['assignment'], deadline=deadline)
         saved = record.get('assessment_review_context')
         # Old initial-review receipts remain readable. A repaired candidate may
         # never progress using a turn that was sent without corrective context.
@@ -1069,7 +1076,7 @@ class CodexRuntime:
                     [row['checkout_resources'].get('output_high_water', 0) for row in prior]),
                 'breach': None, 'limitation': receipt['limitation']}
 
-    def _checkout_endpoint(self, record: dict, recipe: dict, *, finish=False) -> dict:
+    def _checkout_endpoint(self, record: dict, recipe: dict, *, finish=False, deadline=None) -> dict:
         saved = self._get(record['attempt_id'])
         retained = saved.get('checkout_resources') if saved else None
         if not retained:
@@ -1077,6 +1084,8 @@ class CodexRuntime:
         state = copy.deepcopy(retained)
         try:
             end = min(time.monotonic()+20, saved['startup_deadline_monotonic'])
+            if deadline is not None:
+                end = min(end, deadline)
             observation = checkout_runtime.observe_resources(recipe, deadline=end)
             receipt = checkout_runtime.enforce_endpoints(recipe, state['baseline'], observation)
         except Rejected as error:
@@ -1099,9 +1108,10 @@ class CodexRuntime:
             raise Rejected('checkout_resource_limit', 'A prior endpoint resource breach remains held')
         return state
 
-    def _resource_sample(self, record: dict, recipe: dict, *, force=False, activate=False, finish=False) -> dict | None:
+    def _resource_sample(self, record: dict, recipe: dict, *, force=False, activate=False, finish=False,
+                         deadline_monotonic=None) -> dict | None:
         if checkout_boundary.enabled(recipe):
-            return self._checkout_endpoint(record, recipe, finish=finish)
+            return self._checkout_endpoint(record, recipe, finish=finish, deadline=deadline_monotonic)
         if recipe.get('resource_limits') is None:
             return None
         with self._db() as db:
@@ -1112,6 +1122,9 @@ class CodexRuntime:
             deadline = datetime.fromisoformat(record['startup_deadline']).timestamp()
             if record.get('startup_deadline_monotonic') is not None:
                 deadline = min(deadline, time.time() + record['startup_deadline_monotonic'] - time.monotonic())
+        if deadline_monotonic is not None:
+            retry_deadline = time.time() + max(0, deadline_monotonic - time.monotonic())
+            deadline = retry_deadline if deadline is None else min(deadline, retry_deadline)
         result = resource_limits.sample_file(str(self.path), record['assignment']['work_id'], bound, record['attempt_id'],
                                               force=force, activate=activate, finish=finish,
                                               deadline=deadline, last_observed_at=previous)
@@ -2512,12 +2525,155 @@ for index,item in enumerate(json.loads(sys.argv[13])):
         self._save(record)
         return True
 
-    def _read_turn(self, record, recipe, client):
+    def _first_status_gate(self, record, recipe):
+        """Recheck observation authority without reserving or launching work."""
+        end = time.monotonic() + self._first_status_remaining(record)
+        if digest(recipe) != record['recipe_digest']:
+            raise Rejected('runtime_recipe', 'Saved recipe changed before status retry')
+        self._model_probe_gate(record, recipe)  # Read-only frontier/cancel/resource fence.
+        if (record.get('startup_version') != 1 or record.get('phase') != 'running'
+                or record.get('model_calls_attempted') != 1
+                or not record.get('thread_id') or not record.get('turn_id')
+                or record.get('status_readable_at') or record.get('model_stop_receipt')
+                or record.get('interrupt_requested_at')):
+            raise Rejected('runtime_status_retry', 'First status retry requires the exact running acknowledged turn')
+        state = record.get('first_status_read_retry')
+        if state and (state['thread_id'], state['turn_id']) != (record['thread_id'], record['turn_id']):
+            raise Rejected('runtime_identity', 'First status retry identity changed')
+        self._first_status_authority(record)
+        assignment = record['assignment']
+        self._first_status_remaining(record)
+        self._verify_assessment_review(record, recipe, deadline=end)
+        self._first_status_remaining(record)
+        self._verify_source_review(record, recipe, deadline=end)
+        self._first_status_remaining(record)
+        self._resource_sample(record, recipe, force=True, deadline_monotonic=end)
+        self._first_status_remaining(record)
+        files = inventory(Path(recipe['source']), recipe=recipe,
+                          check_deadline=lambda: self._first_status_remaining(record))
+        changes = changed(record['baseline'], files)['changes']
+        if (any(files.get(path) != value for path, value in recipe.get('immutable', {}).items())
+                or (checkout_boundary.enabled(recipe) and not checkout_boundary.changes_allowed(recipe, changes))
+                or (not checkout_boundary.enabled(recipe) and any(path not in recipe.get('mutable', []) for path in changes))
+                or (assignment['kind'] == 'assessment' and digest(files) != json.loads(assignment['candidate'])['identity'])):
+            raise Rejected('source_drift', 'Source exceeds the exact acknowledged assignment scope')
+        if record.get('check_adapters') != self._bindings(assignment, recipe):
+            raise Rejected('check_adapter', 'Saved adapter qualification changed before status retry')
+        self._first_status_remaining(record)
+        self._first_status_authority(record)
+        self._first_status_remaining(record)
+        if digest(recipe) != record['recipe_digest']:
+            raise Rejected('runtime_recipe', 'Saved recipe changed during status preparation')
+        self._model_probe_gate(record, recipe)
+
+    def _first_status_authority(self, record):
+        assignment = record['assignment']
+        errors = self.lifecycle.assignment_authority_errors(assignment)
+        with self.lifecycle.store._connection() as db:
+            run, _ = self.lifecycle._run(db, assignment['work_id'])
+            current = db.execute('SELECT * FROM assignment WHERE assignment_id=? AND attempt_id=?',
+                                 (assignment['assignment_id'], record['attempt_id'])).fetchone()
+            if (run['control'] != 'none' or run['execution'] in ('held', 'paused', 'cancelled', 'delivered', 'retired')
+                    or current is None or current['state'] not in ('sent', 'acknowledged', 'observed_active', 'waiting')
+                    or any(current[key] != assignment.get(key) for key in (
+                        'work_id', 'kind', 'concept_revision', 'concept_digest', 'contract_revision',
+                        'scope', 'candidate', 'executor', 'requested_model', 'requested_effort'))):
+                errors.append('Current execution control or assignment fences status retries')
+        if errors:
+            raise Rejected('runtime_authority', '; '.join(errors))
+
+    def _first_status_remaining(self, record):
+        remaining = self._startup_remaining(record)
+        state = record.get('first_status_read_retry')
+        if state:
+            remaining = min(remaining, (datetime.fromisoformat(state['deadline']) - datetime.now(timezone.utc)).total_seconds(),
+                            state['deadline_monotonic'] - time.monotonic())
+        if remaining <= 0:
+            raise Rejected('assignment_deadline', 'The fixed first status read grace has expired')
+        return remaining
+
+    def _first_status_patch(self, record, updates):
+        self._startup_patch(record, updates, expected_evidence={
+            'first_status_read_retry': copy.deepcopy(record.get('first_status_read_retry')),
+            'status_readable_at': None, 'native_cancel_requested': record.get('native_cancel_requested'),
+            'model_stop_receipt': None, 'interrupt_requested_at': None,
+            'terminal_observation': None, 'startup_stop_receipt': record.get('startup_stop_receipt')})
+
+    def _first_status_reply(self, record, recipe, client):
+        """Only the demonstrated correlated rejection can admit two extra reads.
+
+        Pending rejections survive reconnect. An allocated read with no saved
+        outcome remains held; neither its count nor its clocks can be refreshed.
+        """
+        while True:
+            state = copy.deepcopy(record.get('first_status_read_retry'))
+            if not state and not record.get('status_wait') and any(
+                    item['operation'] == 'thread/read' for item in record.get('error_history', [])):
+                raise Rejected('runtime_status_retry', 'A previous status failure has no pending retry authority')
+            if state:
+                if state['state'] != 'pending' or state['reads'] >= 3:
+                    raise Rejected('runtime_status_retry', 'First status read retry is exhausted or its outcome is uncertain')
+                self._first_status_gate(record, recipe)
+                delay = max(0, state['next_read_monotonic'] - time.monotonic(),
+                            (datetime.fromisoformat(state['next_read_at']) - datetime.now(timezone.utc)).total_seconds())
+                remaining = self._first_status_remaining(record)
+                time.sleep(min(delay, remaining))
+                self._first_status_gate(record, recipe)
+                state.update(state='reading', reads=state['reads'] + 1)
+                self._first_status_patch(record, {'first_status_read_retry': state})
+            timeout = getattr(client, 'timeout', 5)
+            try:
+                if state:
+                    client.timeout = min(timeout, self._first_status_remaining(record))
+                reply = client.request('thread/read', {'threadId': record['thread_id'], 'includeTurns': True})
+            except Rejected as error:
+                first_monotonic = time.monotonic()
+                previous_errors = any(item['operation'] == 'thread/read' for item in record.get('error_history', []))
+                self._remember_error(record, error, 'thread/read')
+                exact = (isinstance(error, RPCRejection) and error.response['method'] == 'thread/read'
+                         and error.response['message'] == 'list_turns is not supported yet'
+                         and isinstance(error.response['request_id'], str) and bool(error.response['request_id'])
+                         and type(error.response['code']) is int)
+                if not exact or (not state and previous_errors):
+                    raise
+                if not state:
+                    if (record.get('startup_version') != 1 or record.get('phase') != 'running'
+                            or record.get('model_calls_attempted') != 1 or not record.get('turn_id')
+                            or record.get('status_readable_at')):
+                        raise
+                    first = datetime.fromisoformat(error.response['received_at'])
+                    reserve = record.get('startup_cleanup_reserve', 0)
+                    deadline = min(first + timedelta(seconds=5),
+                                   datetime.fromisoformat(record['startup_deadline']) - timedelta(seconds=reserve))
+                    state = {'state': 'pending', 'reads': 1, 'thread_id': record['thread_id'], 'turn_id': record['turn_id'],
+                             'first_rejected_at': error.response['received_at'], 'deadline': deadline.isoformat(),
+                             'deadline_monotonic': min(first_monotonic + 5,
+                                                       record['startup_deadline_monotonic'] - reserve), 'rejections': []}
+                state['rejections'].append(copy.deepcopy(error.response))
+                delay = (0.1, 0.4)[min(state['reads'] - 1, 1)]
+                state.update(state='pending' if state['reads'] < 3 else 'blocked',
+                             next_read_at=(datetime.now(timezone.utc) + timedelta(seconds=delay)).isoformat(),
+                             next_read_monotonic=time.monotonic() + delay)
+                self._first_status_patch(record, {'first_status_read_retry': state})
+                if state['state'] == 'blocked':
+                    raise
+            else:
+                if state:
+                    self._first_status_gate(record, recipe)
+                    state.update(state='reply', replied_at=now())
+                    self._first_status_patch(record, {'first_status_read_retry': state})
+                return reply
+            finally:
+                client.timeout = timeout
+
+    def _read_turn(self, record, recipe, client, *, initial_retry=False):
         try:
-            reply = client.request('thread/read', {'threadId': record['thread_id'], 'includeTurns': True})
+            reply = (self._first_status_reply(record, recipe, client) if initial_retry else
+                     client.request('thread/read', {'threadId': record['thread_id'], 'includeTurns': True}))
         except Rejected as error:
-            self._remember_error(record, error, 'thread/read')
-            if self._startup_metadata_pending(record, recipe, error):
+            if not initial_retry:
+                self._remember_error(record, error, 'thread/read')
+            if not record.get('first_status_read_retry') and self._startup_metadata_pending(record, recipe, error):
                 raise Rejected('runtime_status_pending', 'Acknowledged saved turn metadata is not readable before its original deadline') from error
             raise
         thread = reply['thread']
@@ -2529,6 +2685,11 @@ for index,item in enumerate(json.loads(sys.argv[13])):
         turn = turns[0]
         if turn.get('status') not in ('inProgress', 'completed', 'failed', 'interrupted'):
             raise Rejected('runtime_state', 'Unrecognized turn state')
+        if initial_retry and record.get('first_status_read_retry'):
+            self._first_status_gate(record, recipe)
+            state = {**record['first_status_read_retry'], 'state': 'readable', 'readable_at': now()}
+            self._first_status_patch(record, {'first_status_read_retry': state, 'status_readable_at': state['readable_at']})
+            return turn
         record.update(turn_id=turn['id'], phase='running')
         record.setdefault('status_readable_at', now())
         if record.get('status_wait'):
@@ -2566,7 +2727,7 @@ for index,item in enumerate(json.loads(sys.argv[13])):
             else:
                 client = self._client(record, recipe)
                 self._events(record, client)
-                turn = self._read_turn(record, recipe, client)
+                turn = self._read_turn(record, recipe, client, initial_retry=not record.get('status_readable_at'))
                 if turn.get('status') == 'inProgress':
                     return self._observation(record, 'active')
                 stop = self._reconcile(record, recipe, client, interrupt=False, expected_turn=turn)

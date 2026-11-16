@@ -4,6 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -82,6 +83,39 @@ def frozen_patch(tmp_path):
 
 def build(c):
     return evidence.build(c.source, c.baseline, c.frozen, **c.build_kwargs)
+
+
+def test_validation_deadline_bounds_real_git_timeouts(frozen_patch, monkeypatch):
+    c = frozen_patch
+    descriptor = build(c)
+    end = time.monotonic() + 3
+    run = evidence.subprocess.run
+    timeouts = []
+    def bounded(*args, **kwargs):
+        timeouts.append(kwargs['timeout'])
+        assert 0 < kwargs['timeout'] <= end - time.monotonic() + .01
+        return run(*args, **kwargs)
+    monkeypatch.setattr(evidence.subprocess, 'run', bounded)
+    evidence.validate(descriptor, **c.validate_kwargs, deadline=end)
+    assert len(timeouts) == 4
+    with pytest.raises(Rejected, match='deadline'):
+        evidence.validate(descriptor, **c.validate_kwargs, deadline=time.monotonic() - 1)
+
+
+def test_slow_git_result_cannot_continue_validation(frozen_patch, monkeypatch):
+    c = frozen_patch
+    descriptor = build(c)
+    monotonic = time.monotonic
+    clock = [0]
+    monkeypatch.setattr(evidence.time, 'monotonic', lambda: monotonic() + clock[0])
+    run = evidence.subprocess.run
+    def expired(*args, **kwargs):
+        result = run(*args, **kwargs)
+        clock[0] = 10
+        return result
+    monkeypatch.setattr(evidence.subprocess, 'run', expired)
+    with pytest.raises(Rejected, match='deadline'):
+        evidence.validate(descriptor, **c.validate_kwargs, deadline=monotonic() + 3)
 
 
 def rewrite(c, descriptor, mutate, *, repin=False):
