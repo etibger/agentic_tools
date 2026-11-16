@@ -31,6 +31,20 @@ SCHEMA = """CREATE TABLE IF NOT EXISTS human_operator_input (
  received_at TEXT NOT NULL, result TEXT);
 """
 
+UNLOCK_FAILURES = {
+    'request': ('Request checks rejected unlock.',
+                'Open the exact printed HTTPS address and submit from that page in the same browser.'),
+    'form': ('Unlock form is incomplete or malformed.',
+             'Reopen the operator page to obtain a fresh form.'),
+    'operator_key_mismatch': ('Operator key did not match.',
+                              'The submitted key did not match the key loaded when this listener started.'),
+    'operator_sessions_exhausted': ('Operator sessions are full.',
+                                    'Ask the listener owner to close and restart only this control listener. '
+                                    'This revokes its browser sessions; saved instructions remain retained.'),
+    'unavailable': ('Unlock could not complete.',
+                    'Access was not confirmed. Read the operator page before trying again.'),
+}
+
 
 def private_file(path: Path, store) -> Path:
     path = path.expanduser().absolute()
@@ -70,11 +84,11 @@ class IntentController:
 
     def login(self, supplied):
         if not hmac.compare_digest(supplied.encode(), self.secret.encode()):
-            raise Rejected('operator_access', 'Operator access required')
+            raise Rejected('operator_key_mismatch', 'Operator access required')
         with self.lock:
             # Bound sessions per foreground service. Restart revokes all sessions.
             if len(self.sessions) >= 32:
-                raise Rejected('operator_access', 'Restart this foreground listener to renew operator sessions')
+                raise Rejected('operator_sessions_exhausted', 'Restart this foreground listener to renew operator sessions')
             token = secrets.token_urlsafe(32)
             self.sessions[token] = secrets.token_urlsafe(32)
             return token, self.sessions[token]
@@ -264,6 +278,7 @@ def handler_for(controller):
                         ('handoff', 'Check same-owner handoff')]) + '</p></form>')
 
         def do_POST(self):
+            unlock_failure = 'request'
             try:
                 # Match the maintained decision host: the in-app browser may
                 # send Origin:null for a same-origin form. Fetch metadata and
@@ -276,6 +291,7 @@ def handler_for(controller):
                         or self.headers.get('Content-Type') != 'application/x-www-form-urlencoded'
                         or self.headers.get('Transfer-Encoding')):
                     raise Rejected('operator_access', 'Same-origin operator submission required')
+                unlock_failure = 'form'
                 size = int(self.headers.get('Content-Length', '0'))
                 if not 1 <= size <= 16384:
                     raise Rejected('operator_access', 'Bounded form required')
@@ -289,6 +305,7 @@ def handler_for(controller):
                 if self.path == '/unlock':
                     if set(fields) != {'operator_key'}:
                         raise Rejected('operator_access', 'Operator access required')
+                    unlock_failure = 'unavailable'
                     token, _ = controller.login(fields['operator_key'])
                     self.response(HTTPStatus.OK, '<h1>Operator access opened</h1><p><a href="/">Read current controls</a></p>',
                                   cookie='aos_intent=' + token + '; Secure; HttpOnly; SameSite=Strict; Path=/')
@@ -300,15 +317,32 @@ def handler_for(controller):
                 result = controller.submit(fields)
                 self.response(HTTPStatus.OK, '<h1>Saved operator result</h1><p>' + escape(result['message'])
                               + '</p><pre>' + escape(json.dumps(result, indent=2)) + '</pre><p><a href="/">Read current controls</a></p>')
-            except (Rejected, OSError, ValueError, KeyError, sqlite3.Error, CookieError):
+            except Exception as error:
+                handled = isinstance(error, (Rejected, OSError, ValueError, KeyError, sqlite3.Error, CookieError))
+                if self.path != '/unlock' and not handled:
+                    raise  # Preserve instruction-path interruption/recovery semantics.
                 if self.path == '/unlock':
-                    message = ('<h1>Unlock not confirmed</h1><p>Check the printed HTTPS address, browser request '
-                               'and private operator key. No instruction was submitted.</p>')
+                    if not handled:
+                        unlock_failure = 'unavailable'
+                    if isinstance(error, Rejected) and error.code in {'operator_key_mismatch', 'operator_sessions_exhausted'}:
+                        unlock_failure = error.code
+                    # Fixed text only: never publish exception text, submitted
+                    # values, lengths, headers, credentials or session tokens.
+                    reason, next_action = UNLOCK_FAILURES[unlock_failure]
+                    message = ('<h1>Unlock not confirmed</h1><p><strong>' + reason + '</strong> '
+                               + next_action + '</p><p>No instruction was submitted.</p>')
                 else:
                     message = ('<h1>Submission held</h1><p>The request could not be confirmed. '
                                'A submitted form or instruction may already be retained; '
                                'read current status before retrying.</p>')
-                self.response(HTTPStatus.CONFLICT, message + '<p><a href="/">Read saved status</a></p>')
+                try:
+                    self.response(HTTPStatus.CONFLICT, message + '<p><a href="/">Read saved status</a></p>')
+                except Exception:
+                    if self.path != '/unlock':
+                        raise
+                    # A broken unlock response cannot report a category. Close
+                    # it without letting exception details reach HTTP logging.
+                    self.close_connection = True
     return Handler
 
 

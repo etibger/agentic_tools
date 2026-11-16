@@ -56,6 +56,7 @@ class Browser:
             self.cookie = response.getheader('Set-Cookie').split(';', 1)[0]
             assert 'Secure' in response.getheader('Set-Cookie')
             assert 'HttpOnly' in response.getheader('Set-Cookie')
+            assert 'SameSite=Strict' in response.getheader('Set-Cookie')
         status = response.status
         conn.close()
         return status, body
@@ -236,6 +237,9 @@ def test_null_origin_preserves_required_header_checks_before_unlock_or_control(f
             assert 'Owner changes' not in page and 'SIMULATED-operator-secret' not in page
             if route == '/unlock':
                 assert 'Unlock not confirmed' in page and 'No instruction was submitted' in page
+                category = ('Unlock form is incomplete or malformed.' if name == 'Content-Length' and change == 'replace'
+                            else 'Request checks rejected unlock.')
+                assert category in page and 'Operator key did not match.' not in page
                 assert not service.controller.sessions
             else:
                 assert fields['csrf'] not in page
@@ -261,7 +265,11 @@ def test_null_origin_does_not_accept_malformed_forms(fixture, body):
             headers = [('Host', service.origin.removeprefix('https://')), ('Origin', 'null'),
                        ('Sec-Fetch-Site', 'same-origin'), ('Content-Type', 'application/x-www-form-urlencoded'),
                        ('Content-Length', str(len(body))), ('Cookie', browser.cookie)]
-            assert raw_post(browser, route, body, headers)[0] == 409
+            status, page, cookie = raw_post(browser, route, body, headers)
+            assert status == 409 and cookie is None
+            if route == '/unlock':
+                assert 'Unlock form is incomplete or malformed.' in page
+                assert 'Operator key did not match.' not in page
             assert lifecycle.snapshot('Q1')['human_intent'] == before
             with store._connection() as db:
                 assert db.execute('SELECT count(*) FROM human_operator_input').fetchone()[0] == count
@@ -286,6 +294,113 @@ def test_null_origin_still_requires_operator_key_session_and_form_csrf(fixture):
         assert lifecycle.snapshot('Q1')['human_intent'] == before
         with store._connection() as db:
             assert db.execute('SELECT count(*) FROM human_operator_input').fetchone()[0] == 2
+
+
+@pytest.mark.parametrize('origin', ['exact', 'null'])
+@pytest.mark.parametrize('supplied', ['wrong', '', 'trailing-space'])
+def test_unlock_key_mismatch_has_fixed_nonsecret_message_and_no_side_effects(fixture, capsys, origin, supplied):
+    store, lifecycle, options = fixture
+    with IntentService(store, **options) as service:
+        browser = Browser(service)
+        before = lifecycle.snapshot('Q1')['human_intent']
+        value = options['operator_key'].read_text().strip() + ' ' if supplied == 'trailing-space' else supplied
+        status, page = browser.request('POST', '/unlock', {'operator_key': value},
+                                       Origin=service.origin if origin == 'exact' else 'null')
+        assert status == 409 and not browser.cookie and not service.controller.sessions
+        assert 'Operator key did not match.' in page and 'No instruction was submitted.' in page
+        assert 'Request checks rejected unlock.' not in page and 'Operator sessions are full.' not in page
+        assert 'SIMULATED-operator-secret' not in page
+        assert lifecycle.snapshot('Q1')['human_intent'] == before
+        with store._connection() as db:
+            assert db.execute('SELECT count(*) FROM human_operator_input').fetchone()[0] == 0
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ''
+
+
+def test_unlock_session_limit_is_reported_only_after_matching_key_and_preserves_stop(fixture, capsys):
+    store, lifecycle, options = fixture
+    with IntentService(store, **options) as service:
+        browser = Browser(service)
+        browser.login(options['operator_key'], Origin='null')
+        browser.submit(browser.form(action='enroll'))
+        browser.submit(browser.form(action='stop'))
+        before = lifecycle.snapshot('Q1')['human_intent']
+        for _ in range(31):
+            browser.login(options['operator_key'], Origin='null')
+        assert len(service.controller.sessions) == 32
+        cookie = browser.cookie
+        assert 'Operator key did not match.' in browser.request('POST', '/unlock', {'operator_key': 'wrong'}, Origin='null')[1]
+        status, page = browser.request('POST', '/unlock', {'operator_key': options['operator_key'].read_text().strip()}, Origin='null')
+        assert status == 409 and 'Operator sessions are full.' in page
+        assert 'No instruction was submitted.' in page and 'Operator key did not match.' not in page
+        assert browser.cookie == cookie and len(service.controller.sessions) == 32
+        assert 'SIMULATED-operator-secret' not in page
+        assert all(token not in page and csrf not in page for token, csrf in service.controller.sessions.items())
+        assert browser.form(action='resume')['csrf']  # Existing authenticated sessions still work.
+        assert lifecycle.snapshot('Q1')['human_intent'] == before
+        with store._connection() as db:
+            assert db.execute('SELECT count(*) FROM human_operator_input').fetchone()[0] == 2
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ''
+
+
+def test_unlock_incomplete_body_reports_form_failure_without_logging(fixture, capsys):
+    store, _, options = fixture
+    with IntentService(store, **options) as service:
+        browser = Browser(service)
+        body = b'operator_key=SIMULATED-incomplete-body'
+        headers = [('Host', service.origin.removeprefix('https://')), ('Origin', 'null'),
+                   ('Sec-Fetch-Site', 'same-origin'), ('Content-Type', 'application/x-www-form-urlencoded'),
+                   ('Content-Length', str(len(body) + 1))]
+        status, page, cookie = raw_post(browser, '/unlock', body, headers)
+        assert status == 409 and cookie is None and not service.controller.sessions
+        assert 'Unlock form is incomplete or malformed.' in page and 'SIMULATED-incomplete-body' not in page
+        with store._connection() as db:
+            assert db.execute('SELECT count(*) FROM human_operator_input').fetchone()[0] == 0
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ''
+
+
+@pytest.mark.parametrize('failure', [OSError, RuntimeError])
+def test_unexpected_unlock_failure_uses_safe_fallback_without_echoing_exception(fixture, monkeypatch, capsys, failure):
+    store, _, options = fixture
+    with IntentService(store, **options) as service:
+        browser = Browser(service)
+        def unavailable(_supplied):
+            raise failure('SIMULATED-sensitive-exception-content')
+        monkeypatch.setattr(service.controller, 'login', unavailable)
+        status, page = browser.request('POST', '/unlock', {'operator_key': 'SIMULATED-supplied-value'}, Origin='null')
+        assert status == 409 and not browser.cookie and not service.controller.sessions
+        assert 'Unlock could not complete.' in page and 'No instruction was submitted.' in page
+        assert 'Operator key did not match.' not in page and 'SIMULATED' not in page
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ''
+
+
+@pytest.mark.parametrize('broken_fallback', [False, True])
+def test_unlock_response_failure_never_logs_exception_or_creates_instruction(fixture, monkeypatch, capsys, broken_fallback):
+    from http.client import RemoteDisconnected
+    store, _, options = fixture
+    with IntentService(store, **options) as service:
+        browser = Browser(service)
+        handler = service.server.RequestHandlerClass
+        response = handler.response
+        def broken(self, status, *args, **kwargs):
+            if status == 200 or broken_fallback:
+                raise RuntimeError('SIMULATED-sensitive-response-error')
+            return response(self, status, *args, **kwargs)
+        monkeypatch.setattr(handler, 'response', broken)
+        if broken_fallback:
+            with pytest.raises(RemoteDisconnected):
+                browser.login(options['operator_key'])
+        else:
+            status, page = browser.request('POST', '/unlock', {'operator_key': options['operator_key'].read_text().strip()})
+            assert status == 409 and 'Unlock could not complete.' in page and 'SIMULATED' not in page
+        assert not browser.cookie and len(service.controller.sessions) == 1  # Access delivery remains unconfirmed.
+        with store._connection() as db:
+            assert db.execute('SELECT count(*) FROM human_operator_input').fetchone()[0] == 0
+    captured = capsys.readouterr()
+    assert captured.out == captured.err == ''
 
 
 def test_authentication_csrf_scope_and_duplicate_fields(fixture):
