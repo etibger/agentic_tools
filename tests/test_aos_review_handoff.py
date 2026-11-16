@@ -83,6 +83,20 @@ def handoff(isolated, monkeypatch):
         finally:
             db.close()
     p.connection = connection
+    # Prompt delivery now reads the digest-bound DI plan. Retain it in this
+    # otherwise minimal simulation rather than bypassing plan validation.
+    from di_plan_fixture import synthetic_plan
+    from agentic_tools.aos.store import digest
+    envelope = {**p.package['execution_envelope'], **p.contract, 'compatibility_checks': []}
+    p.package.update(execution_envelope=envelope,
+                     team_envelope=[{'name': 'writer'}, {'name': 'assessor'}],
+                     di_plan=synthetic_plan(envelope))
+    with connection() as db:
+        db.execute('CREATE TABLE work(work_id TEXT PRIMARY KEY,current_concept INTEGER)')
+        db.execute('CREATE TABLE concept(work_id TEXT,revision INTEGER,package TEXT,digest TEXT)')
+        db.execute('INSERT INTO work VALUES(?,?)', (p.assignment['work_id'], 1))
+        db.execute('INSERT INTO concept VALUES(?,?,?,?)',
+                   (p.assignment['work_id'], 1, canonical(p.package), digest(p.package)))
     with connection() as db:
         db.execute('CREATE TABLE assignment (' + ','.join(column + ' ' + (
             'INTEGER' if column in {'concept_revision', 'contract_revision'} else 'TEXT') for column in COLUMNS)

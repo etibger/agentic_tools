@@ -141,6 +141,7 @@ def test_preview_and_apply_preserve_history_budget_and_other_work(legacy, tmp_pa
     assert 'retired' in rendered['stage_status']
     assert 'Historical startup remains unknown' in rendered['attention_note']
     assert rendered['tasks'][0]['status'] == 'retired' and rendered['completed_at'] is None
+    assert all(task['status'] == 'retired' and 'accepted_at' not in task for task in rendered['tasks'])
     assert recovery.recover(lifecycle, req, apply=True) == result
     assert recovery.recover(lifecycle, req) == result
     with (store.directory / 'worker.lock').open('r+') as lock:
