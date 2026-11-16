@@ -51,3 +51,17 @@ def test_native_checkpoint_must_finish_before_next_writer(request, monkeypatch, 
             # Startup of writer two exercises its checkpoint baseline in the
             # actual runtime preflight and atomic launch reservation.
             assert assignments[-1]['state'] == 'observed_active'
+        plan = p.store.read('Q2')['concepts'][-1]['package']['di_plan']
+        turns = [params for method, params in p.backend.calls if method == 'turn/start']
+        assert len(turns) == len(assignments)
+        for turn, assignment, task in zip(turns, assignments, plan['tasks']):
+            text = turn['input'][0]['text']
+            assigned, _ = json.JSONDecoder().raw_decode(text.split(
+                '\nYour exact assigned DI task (outputs, dependencies and definition of done):\n', 1)[1])
+            context, _ = json.JSONDecoder().raw_decode(text.split(
+                '\nAuthoritative approved DI plan (context for this assigned task):\n', 1)[1])
+            assert assigned == task
+            assert assigned['id'] == json.loads(assignment['scope'])['di_task_id']
+            assert context == plan
+            assert turn['effort'] == assignment['requested_effort']
+            assert turn['approvalPolicy'] == 'never'
