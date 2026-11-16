@@ -3,6 +3,7 @@
 The synthetic HTTP client below is a test seam, never human qualification. No
 CLI command supplies a decision and the workflow uses no database edits.
 """
+from di_plan_fixture import synthetic_plan
 from contextlib import contextmanager
 from http.client import HTTPSConnection
 import json
@@ -66,7 +67,7 @@ class Coordinator:
         request = {"operation_id": "concept-" + work, "work_id": work, "expected_work_revision": 1,
                    "package_id": "CLI-DI", "revision": 1, "body": "Synthetic command fixture only",
                    "acceptance": ["Independent simulated checks pass"], "team_envelope": team,
-                   "authority": bounds["authority"], "execution_envelope": bounds}
+                   "authority": bounds["authority"], "execution_envelope": bounds, "di_plan": synthetic_plan(bounds)}
         current = self.request("present-concept", request)
         assert current == self.request("present-concept", request)
         registered, args = self.control("register-contract", "register-" + work, current, work=work)

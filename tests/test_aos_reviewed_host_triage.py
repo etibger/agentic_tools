@@ -1,4 +1,5 @@
 """Simulated reviewed-host receipts: no model, native command or original state."""
+from di_plan_fixture import synthetic_plan
 from copy import deepcopy
 import json
 
@@ -38,7 +39,7 @@ def setup(tmp_path, *, repairs=1, retries=0):
             for name, role in [('writer', 'Implementer'), ('assessor', 'Independent assessor')]]
     store.introduce('intro', WORK, 'SIMULATED reviewed host triage', ['source'], team)
     current = store.present('present', WORK, 1, 'SIMULATED-DI', 1, 'SIMULATED failure triage',
-                            ['No host commands'], team, bounds['authority'], execution_envelope=bounds)
+                            ['No host commands'], team, bounds['authority'], execution_envelope=bounds, di_plan=synthetic_plan(bounds))
     lifecycle = Lifecycle(store)
     lifecycle.register('register', WORK, {**bounds, 'concept_revision': 1, 'concept_digest': current['digest']})
     approve(store, current, WORK)

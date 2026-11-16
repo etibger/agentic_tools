@@ -241,7 +241,7 @@ class Store:
                 team_envelope: list[dict], authority: str, *,
                 recommendation: str | None = None, alternative: str | None = None,
                 consequence: str | None = None, execution_envelope: dict | None = None,
-                decision_context: dict | None = None) -> dict:
+                decision_context: dict | None = None, di_plan: dict | None = None) -> dict:
         identifier(package_id)
         if type(revision) is not int or revision < 1:
             raise Rejected("invalid_revision", "Concept revision must be a positive integer")
@@ -265,6 +265,11 @@ class Store:
             if not isinstance(execution_envelope, dict):
                 raise Rejected("invalid_execution_envelope", "Approved execution bounds must be an explicit object")
             package["execution_envelope"] = execution_envelope
+            from .planning import validate_execution_plan
+            validate_execution_plan(di_plan, team_envelope, execution_envelope)
+        if di_plan is not None:
+            from .planning import validate_plan
+            package['di_plan'] = validate_plan(di_plan, team_envelope)
         payload = ["present", expected_work_revision, package]
         with self._transaction() as db:
             if prior := self._prior(db, operation_id, payload):
@@ -273,6 +278,12 @@ class Store:
             self._expected(work, expected_work_revision)
             if revision != (work["current_concept"] or 0) + 1:
                 raise Rejected("invalid_concept_revision", "Concept revision must increase by exactly one")
+            if work['current_concept'] and di_plan is not None:
+                previous = db.execute('SELECT package FROM concept WHERE work_id=? ORDER BY revision DESC', (work_id,)).fetchall()
+                originals = {t['id']: t['original_estimate'] for row in previous
+                             for t in json.loads(row[0]).get('di_plan', {}).get('tasks', [])}
+                if any(t['id'] in originals and t['original_estimate'] != originals[t['id']] for t in di_plan['tasks']):
+                    raise Rejected('original_estimate_changed', 'Retain original task estimates; record revised forecasts separately')
             timestamp = now()
             package_digest = digest(package)
             db.execute("INSERT INTO concept VALUES(?,?,?,?,?)", (work_id, revision, package_digest, canonical(package), timestamp))
@@ -304,6 +315,9 @@ class Store:
                 from .lifecycle import view_in
                 result["lifecycle"] = view_in(db, work_id)
                 result["execution"] = result["lifecycle"]["execution"]
+            if concepts and 'di_plan' in result['concepts'][-1]['package']:
+                from .plan_runtime import progress_in
+                result['plan_progress'] = progress_in(db, work_id, result['concepts'][-1]['package'])
             result["observed_at"] = now()
             result["dispatch_available"] = False
             result["next_action"] = "Q1 simulation only; inspect lifecycle blockers. Live implementation dispatch is unavailable" if "lifecycle" in result else "M0 qualification only; implementation dispatch is unavailable"
@@ -384,6 +398,10 @@ class Store:
             concept = db.execute("SELECT * FROM concept WHERE work_id=? AND revision=?", (work_id, work["current_concept"])).fetchone()
             if not concept or concept["digest"] != package_digest or work["state"] != "awaiting_concept_approval":
                 raise Rejected("stale_concept", "Only the current pending concept can be approved")
+            package = json.loads(concept['package'])
+            if 'execution_envelope' in package:
+                from .planning import validate_execution_plan
+                validate_execution_plan(package.get('di_plan'), package['team_envelope'], package['execution_envelope'])
             if db.execute("SELECT 1 FROM decision WHERE work_id=? AND concept_revision=? AND outcome IN ('approved','declined','cancelled')",
                           (work_id, work['current_concept'])).fetchone():
                 raise Rejected("already_answered", "This exact proposal already has a terminal decision")
@@ -457,6 +475,9 @@ class Store:
             package = json.loads(concept["package"])
             if digest(package) != challenge["digest"]:
                 raise Rejected("stale_digest", "Challenge no longer matches the exact immutable package; execution held")
+            if outcome == 'approved' and 'execution_envelope' in package:
+                from .planning import validate_execution_plan
+                validate_execution_plan(package.get('di_plan'), package['team_envelope'], package['execution_envelope'])
             db.execute("""INSERT INTO decision
                 (decision_id,challenge_id,work_id,concept_revision,digest,outcome,host,qualification,response,created_at,
                  package_snapshot,package_id,exact_answer,source_channel,interaction_reference,requested_at,provenance_kind)

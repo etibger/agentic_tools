@@ -1,4 +1,5 @@
 """Disposable state and synthetic metadata receipts only; no real readiness/model."""
+from di_plan_fixture import synthetic_plan
 import copy
 import fcntl
 from datetime import datetime
@@ -151,7 +152,7 @@ class Fixture:
                 'ledger_directory': str(self.store.directory), 'max_assignments': 10, 'max_job_seconds': 14400, 'max_seconds': 144000})
         bounds.pop('concept_revision'); bounds.pop('concept_digest')
         old = self.store.present('present', self.work, 1, 'FIXTURE-DI', 1, 'Unchanged feature', ['Check fixture'], TEAM,
-                                 bounds['authority'], execution_envelope=bounds)
+                                 bounds['authority'], execution_envelope=bounds, di_plan=synthetic_plan(bounds))
         self.digest = old['digest']
         self.lifecycle.register('register', self.work, {**bounds, 'concept_revision': 1, 'concept_digest': self.digest})
         self.decision = approve(self.store, self.work, self.digest, 'original-decision')

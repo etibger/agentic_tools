@@ -1,4 +1,5 @@
 """Reusable evidence contract and exact technical qualification; no model calls."""
+from di_plan_fixture import synthetic_plan
 import copy
 import hashlib
 import json
@@ -64,7 +65,7 @@ def prepared_checks(tmp_path, monkeypatch, *, delegated=False, product=None, rec
     else:
         bounds['check_adapters'] = identities
     concept = store.present('present', 'ADAPTERS', 1, 'ADAPTER-DI', 1, 'Disposable checks', ['build and tests'],
-                            team, bounds['authority'], execution_envelope=bounds)
+                            team, bounds['authority'], execution_envelope=bounds, di_plan=synthetic_plan(bounds))
     cap = store.host_capability('test-host', 'SIMULATED:adapter-contract')
     challenge = store.begin_approval('approval', 'ADAPTERS', store.read('ADAPTERS')['revision'], concept['digest'], capability=cap)
     store.finish_approval(challenge['challenge_id'], 'accept', True, capability=cap, exact_answer='Synthetic approval',

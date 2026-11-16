@@ -1,4 +1,5 @@
 """One bounded continuation in disposable journals with simulated observations."""
+from di_plan_fixture import synthetic_plan
 import copy
 import json
 from pathlib import Path
@@ -238,7 +239,7 @@ def continuation_proposal(failed_startup, request):
         current['current_concept'] + 1,
         'SIMULATED approval of one continuation after the retained observation failure',
         ['Retain the failed interval, original charges, exact roots and original limits'],
-        package['team_envelope'], envelope['authority'], execution_envelope=envelope)
+        package['team_envelope'], envelope['authority'], execution_envelope=envelope, di_plan=synthetic_plan(envelope))
     c.continuation_contract.update(
         concept_revision=c.continuation_concept['concept_revision'],
         concept_digest=c.continuation_concept['digest'])

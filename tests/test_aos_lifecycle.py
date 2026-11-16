@@ -1,4 +1,5 @@
 """Q1 simulations qualify state semantics, not a human host or live agents."""
+from di_plan_fixture import synthetic_plan
 import json
 import sqlite3
 import subprocess
@@ -47,7 +48,7 @@ def setup(tmp_path, workflow='bug-fix', *, approved=True, admitted=True, work_id
     execution_team = [{**TEAM[0], 'name': person, 'role': role, 'scope': 'Synthetic fixture; max 8 assignments, 60 seconds each, two repairs'}
                       for person, role in [('writer', 'Implementer'), ('assessor', 'Independent assessor')]]
     current = store.present('present-' + work_id, work_id, 1, 'Q1-DI', 1, 'Synthetic fixture', ['Synthetic acceptance'],
-                            execution_team, approved_bounds['authority'], execution_envelope=approved_bounds)
+                            execution_team, approved_bounds['authority'], execution_envelope=approved_bounds, di_plan=synthetic_plan(approved_bounds))
     lifecycle = Lifecycle(store)
     lifecycle.register('register-' + work_id, work_id, contract(current, workflow, **overrides))
     if approved:

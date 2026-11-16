@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from .store import Rejected, Store, canonical, digest, identifier, now
 from .checks import adapter_for, bindings, check_kind, validate_normalized, passed as evidence_passed
 from .checkout_boundary import reviewed_host, changes_allowed
-from . import human_intent
+from . import human_intent, plan_runtime
 
 
 SCHEMA = """
@@ -406,6 +406,10 @@ class Lifecycle:
         if not isinstance(bounds, dict):
             return ['Approved package contains no explicit execution envelope; concept remains approved, execution is held']
         errors = []
+        try:
+            plan_runtime.package_in(db, work_id)
+        except Rejected as error:
+            errors.append(str(error))
         exact = ('revision', 'workflow', 'baseline', 'behavior_delta', 'required_checks', 'compatibility_checks',
                  'writer', 'assessor', 'receiving_owner', 'authority', 'resources', 'qualified_route', 'model', 'effort')
         for field in exact:
@@ -442,12 +446,13 @@ class Lifecycle:
     def assignment_authority_errors(self, assignment: dict) -> list[str]:
         """Rechecked for saved intents and already observed attempts on recovery."""
         with self.store._connection() as db:
-            return self._assignment_authority_errors_in(db, assignment)
+            return self._assignment_authority_errors_in(db, assignment) + plan_runtime.phase_errors_in(db, assignment)
 
     def _assignment_authority_errors_in(self, db: sqlite3.Connection, assignment: dict) -> list[str]:
         _, contract = self._run(db, assignment['work_id'])
         work = self.store._work(db, assignment['work_id'])
-        errors = self._approved_envelope_errors(db, assignment['work_id'], contract) + human_intent.errors_in(db, assignment['work_id'])
+        errors = (self._approved_envelope_errors(db, assignment['work_id'], contract)
+                  + human_intent.errors_in(db, assignment['work_id']))
         if (assignment['concept_revision'] != work['current_concept']
                 or assignment['contract_revision'] != contract['revision']
                 or assignment['concept_digest'] != contract['concept_digest']
@@ -608,7 +613,7 @@ class Lifecycle:
                 raise Rejected('stale_worker', 'Only the current worker epoch can claim an outbox item')
             if run['execution'] == 'paused':
                 return None
-            errors = self._admission_errors(db, assignment['work_id'])
+            errors = self._admission_errors(db, assignment['work_id']) + plan_runtime.phase_errors_in(db, assignment)
             if errors:
                 if not db.execute('SELECT 1 FROM technical_blocker WHERE work_id=?', (assignment['work_id'],)).fetchone():
                     self._block(db, assignment['work_id'], 'admission', '; '.join(errors))
@@ -803,6 +808,7 @@ class Lifecycle:
         if not reviewed_host(contract.get('runtime_recipe', {})):
             return {'purpose': 'assessment'}
         if (self._assignment_authority_errors_in(db, dict(assignment))
+                or plan_runtime.phase_errors_in(db, assignment)
                 or assignment['candidate'] != run['candidate'] or not assignment['candidate']):
             raise Rejected('assessment_context', 'Assessment no longer binds the approved current frozen candidate')
         return self._assessment_lineage_in(db, assignment, contract, run['cycle'])
@@ -968,6 +974,7 @@ class Lifecycle:
             elif coordinator_error:
                 error = coordinator_error
             elif (self._admission_errors(db, work_id) or self._assignment_authority_errors_in(db, dict(a))
+                    or plan_runtime.phase_errors_in(db, a)
                     or db.execute("SELECT 1 FROM owned_stop WHERE work_id=? AND state<>'stopped'", (work_id,)).fetchone()
                     or stop_conflicts_in(db, work_id)):
                 error = 'Current authority, control, ownership or an unresolved blocker prevents assessment progression'
@@ -1067,6 +1074,7 @@ class Lifecycle:
             raise Rejected('human_intent', 'Current instruction or agreed ownership prevents handoff')
         if error := assessment_evidence.completion_error(self, db, a, result):
             raise Rejected('assessment_evidence', error)
+        plan_runtime.advance_in(self, db, a, result)
         delivery = {'candidate': result['candidate'], 'accepted': True, 'committed': False, 'installed': False,
                     'released': False, 'receiving_owner': contract['receiving_owner'], 'checks': result['checks'],
                     'limits': 'Q2 bounded runtime candidate; desktop/archive qualification remains separate' if result.get('runtime_turn_id') else 'Q1 simulated acceptance only',
@@ -1087,6 +1095,7 @@ class Lifecycle:
                                                contract.get('runtime_recipe', {}))
                 or self._admission_errors(db, work_id)
                 or self._assignment_authority_errors_in(db, dict(assignment))
+                or plan_runtime.phase_errors_in(db, assignment)
                 or assignment['candidate'] != run['candidate']
                 or db.execute("SELECT 1 FROM assignment WHERE work_id=? AND assignment_id<>? AND state NOT IN ('completed','failed','cancelled')",
                               (work_id, assignment['assignment_id'])).fetchone()
@@ -1161,6 +1170,8 @@ class Lifecycle:
                     error = None
                     if human_intent.errors_in(db, a['work_id']):
                         error = 'Current human instruction prevents candidate acceptance or successor admission'
+                    elif plan_runtime.phase_errors_in(db, a):
+                        error = 'DI milestone evidence prevents candidate acceptance or successor admission'
                     elif db.execute('SELECT 1 FROM technical_blocker WHERE work_id=?', (a['work_id'],)).fetchone():
                         error = 'An unresolved technical blocker prevents candidate acceptance or successor admission'
                     elif result.get('owned_processes') != [] or result.get('effects_reconciled') is not True or not partial_mutations_known(result):
@@ -1171,6 +1182,11 @@ class Lifecycle:
                         error = self._assessment_error(contract, a, result)
                     elif not result.get('candidate') or not all(result['candidate'].get(k) for k in ('identity', 'source_identity', 'inventory')):
                         error = 'Implementation must freeze an exact candidate and source/new-file inventory'
+                    if error is None and a['kind'] in ('implementation', 'repair'):
+                        try:
+                            plan_runtime.advance_in(self, db, a, result)
+                        except Rejected as problem:
+                            error = str(problem)
                     effects_unknown = (result.get('owned_processes') != [] or result.get('effects_reconciled') is not True
                                        or not partial_mutations_known(result))
                     db.execute('UPDATE assignment SET state=?,terminal_at=?,result=? WHERE assignment_id=?',
@@ -1181,6 +1197,7 @@ class Lifecycle:
                         finding = result.get('finding', {})
                         reports = result.get('initial_reports', {})
                         if (not human_intent.errors_in(db, a['work_id'])
+                                and not plan_runtime.phase_errors_in(db, a)
                                 and a['kind'] == 'assessment' and result.get('executor') == contract['assessor']
                                 and result.get('candidate') == json.loads(a['candidate'])
                                 and result.get('observed_source_identity') == json.loads(a['candidate'])['source_identity']
@@ -1299,7 +1316,7 @@ class Lifecycle:
             # Authority may have changed between the worker observation and this
             # durable stop request. Linearize against the host's instruction
             # transaction here; a newer resume must defeat an obsolete stop.
-            errors = self._assignment_authority_errors_in(db, dict(a))
+            errors = self._assignment_authority_errors_in(db, dict(a)) + plan_runtime.phase_errors_in(db, a)
             if not errors:
                 return False
             detail = '; '.join(errors)

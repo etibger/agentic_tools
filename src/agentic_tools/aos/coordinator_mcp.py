@@ -34,9 +34,16 @@ class ControlOperation(BoundOperation):
     instruction_id: str | None = Field(default=None, min_length=1, max_length=128)
 
 
+class ForecastOperation(BoundOperation):
+    task_id: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=1, max_length=4096)
+    forecast: dict
+    actuals: dict
+
+
 Operation = Literal[
     "introduce-work", "present-concept", "register-contract", "prepare-decision",
-    "reconcile-prerequisites", "admit", "pause", "resume", "cancel",
+    "reconcile-prerequisites", "record-forecast", "admit", "pause", "resume", "cancel",
 ]
 
 
@@ -136,6 +143,9 @@ def create_coordinator_server(store: Store, *, decision_origin: str,
                     "digest": result.get("digest"), "result": result.get("result"),
                     "decision_url": origin + ("/?challenge=" + challenge if challenge else "/")}
         lifecycle = Lifecycle(store)
+        if operation == 'record-forecast':
+            from .plan_runtime import record_forecast
+            return record_forecast(lifecycle, **request)
         if operation == "reconcile-prerequisites":
             return lifecycle.reconcile_prerequisites(**request)
         if operation == "register-contract":
@@ -152,6 +162,8 @@ def create_coordinator_server(store: Store, *, decision_origin: str,
 
 
 def schema_for(operation: Operation) -> type[BaseModel]:
+    if operation == 'record-forecast':
+        return ForecastOperation
     if operation in {'pause', 'resume', 'cancel'}:
         return ControlOperation
     return {"introduce-work": IntroductionRequest, "present-concept": ConceptRequest,

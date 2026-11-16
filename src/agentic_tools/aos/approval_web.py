@@ -259,6 +259,9 @@ def handler_for(controller: DecisionController) -> type[BaseHTTPRequestHandler]:
             context = package.get("decision_context", {})
             brief = "".join(f"<p><strong>{label}:</strong> {escape(context[key])}</p>"
                             for key, label in DECISION_CONTEXT_LABELS.items() if key in context)
+            from .planning import approval_summary_html
+            plan_summary = (approval_summary_html(package['di_plan'], package['execution_envelope'])
+                            if 'di_plan' in package and 'execution_envelope' in package else '')
             body = f"""<h1>Needs your decision</h1><p class="note">Review this proposal before choosing. Closing this tab leaves work held.</p>
 <section><small>Proposal revision {package['revision']}</small>
 <h2>{escape(package['body'])}</h2>
@@ -266,6 +269,7 @@ def handler_for(controller: DecisionController) -> type[BaseHTTPRequestHandler]:
 <p><strong>Alternative:</strong> {escape(package.get('alternative', 'Decline or cancel; work stays held.'))}</p>
 <p><strong>Consequence:</strong> {escape(package.get('consequence', 'Approval records this exact concept; implementation dispatch remains gated.'))}</p>
 {brief}
+{plan_summary}
 <h3>What this approval covers</h3><ul>{acceptance}</ul>
 <p><strong>Authority:</strong> {escape(package['authority'])}</p>
 <h3>Team and limits</h3><ul>{team}</ul>

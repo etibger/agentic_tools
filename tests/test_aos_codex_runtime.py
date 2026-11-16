@@ -1,4 +1,5 @@
 """Deterministic adapter tests; scripted RPC is never real model qualification."""
+from di_plan_fixture import synthetic_plan
 import copy
 import hashlib
 import json
@@ -153,7 +154,7 @@ def prepared(tmp_path, monkeypatch):
                                            'max_assignments': 8, 'max_seconds': 2400}
     team = [{**TEAM[0], 'name': person, 'role': role} for person, role in [('writer', 'Implementer'), ('assessor', 'Independent assessor')]]
     concept = store.present('present', 'Q2', 1, 'Q2-DI', 1, 'Scripted fixture', ['native add check'], team,
-                            bounds['authority'], execution_envelope=bounds)
+                            bounds['authority'], execution_envelope=bounds, di_plan=synthetic_plan(bounds))
     cap = store.host_capability('test-host', 'SIMULATED:adapter')
     challenge = store.begin_approval('approval', 'Q2', store.read('Q2')['revision'], concept['digest'], capability=cap)
     store.finish_approval(challenge['challenge_id'], 'accept', True, capability=cap,

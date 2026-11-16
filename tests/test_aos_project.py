@@ -1,5 +1,6 @@
 """Project preparation binds facts without spending or granting product authority."""
 from __future__ import annotations
+from di_plan_fixture import synthetic_plan
 
 import copy
 import hashlib
@@ -89,7 +90,7 @@ def setup(tmp_path, monkeypatch):
                'concept': {'operation_id': 'concept-fixture', 'work_id': 'FIXTURE', 'expected_work_revision': 1,
                            'package_id': 'FIXTURE-DI', 'revision': 1, 'body': 'Exact user outcome',
                            'acceptance': ['Exact acceptance'], 'team_envelope': copy.deepcopy(team),
-                           'authority': bounds['authority'], 'execution_envelope': bounds}}
+                           'authority': bounds['authority'], 'execution_envelope': bounds, 'di_plan': synthetic_plan(bounds)}}
     p = SimpleNamespace(config=config, request=request, state=state, source=source, outputs=outputs,
                         control=control, project_file=control / 'project.json', request_file=control / 'work.json',
                         temporary=temporary, calls=[], result_change=lambda value: None)

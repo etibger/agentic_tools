@@ -226,6 +226,16 @@ def dashboard(snapshot: dict) -> dict:
                 'next_action': 'Inspect recorded assignment owners and blockers.', 'source_revision': source['revision'],
                 'observed_at': observed, 'provenance': snapshot['source_digest'], 'nodes': nodes}
     envelope = concepts.get(source.get('current_concept'), {}).get('package', {}).get('execution_envelope', {})
+    package = concepts.get(source.get('current_concept'), {}).get('package', {})
+    plan = package.get('di_plan')
+    plan_nodes = None
+    if plan is not None:
+        from .planning import project_plan
+        plan_nodes = project_plan(plan, source.get('plan_progress', {}), observed)
+        if source['concept_decision'] != 'approved' or source['execution'] in ('held', 'paused', 'cancelled', 'retired'):
+            for n in plan_nodes:
+                if n['status'] == 'ready':
+                    n.update(status='held', wait_reason='Execution ' + source['execution'] + '; concept ' + source['concept_decision'])
     budget = {'assignment_limit': envelope.get('max_assignments'), 'assignments_recorded': len(assignments),
               'per_assignment_seconds': envelope.get('max_seconds'), 'repair_limit': envelope.get('max_repairs'),
               'shared_runtime_reservations': 'Not collected by this read-only work view; remaining shared budget is unavailable'}
@@ -242,11 +252,13 @@ def dashboard(snapshot: dict) -> dict:
                                 'Observe the saved assignment; independent review follows a frozen result.' if current else 'Reconcile disposition and remaining qualification.'),
                      'dependency': 'Current authority, checks, ownership and shared limits still apply.'},
             'candidate': (run.get('candidate') or {}).get('identity'),
-            'tasks': [{'id': 'workflow', 'title': 'Legacy operational ownership' if retired else 'Independent workflow acceptance',
+            'tasks': ([{'id': n['id'], 'title': n['title'], 'status': n['status'] if n['status'] in ('accepted', 'active', 'held') else 'held' if n['status'] == 'failed' else 'pending',
+                        **({'accepted_at': n['observed_at']} if n['status'] == 'accepted' else {})} for n in plan_nodes if n['kind'] == 'action'] if plan_nodes else [{'id': 'workflow', 'title': 'Legacy operational ownership' if retired else 'Independent workflow acceptance',
                        'status': 'retired' if retired else 'accepted' if delivery else 'active' if current else 'held',
-                       **({'accepted_at': source['updated_at']} if delivery else {})}],
+                       **({'accepted_at': source['updated_at']} if delivery else {})}]),
             'history': [], 'decisions': decisions, 'blockers': blockers,
-            'phase_flow': graph(current_nodes, 'current'), 'phase_graph': graph(history_nodes or current_nodes, 'history'),
+            'phase_flow': graph(plan_nodes or current_nodes, 'current'), 'phase_graph': graph(history_nodes or current_nodes, 'history'),
+            'di_plan': deepcopy(plan), 'plan_progress': deepcopy(source.get('plan_progress', {})),
             'agents': [{'role': a['executor'] + ' · ' + a['kind'], 'status': a['state'],
                         'assignment': a['assignment_id'] + ' · requested ' + a['requested_model'] + '/' + a['requested_effort']
                         + ' · runtime ' + str(a.get('runtime_model') or 'unavailable') + '/' + str(a.get('runtime_effort') or 'unavailable')

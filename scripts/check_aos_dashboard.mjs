@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 
 const input=JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-const html=fs.readFileSync(new URL('../templates/dashboard.html',import.meta.url),'utf8');
+const html=fs.readFileSync(new URL('../src/agentic_tools/aos/assets/dashboard.html',import.meta.url),'utf8');
 const source=html.match(/<script>([\s\S]+)<\/script>/)[1];
 let current=structuredClone(input),offline=false;
 const nodes=new Map(),storage=new Map();
@@ -19,10 +19,23 @@ assert.match(nodes.get('health').textContent,new RegExp('revision '+input.source
 assert.ok(nodes.get('health').textContent.includes(input.source_digest));
 assert.equal(nodes.get('usage-billed').textContent,'Unavailable');
 assert.equal(nodes.get('usage-total').textContent,'Unavailable');
-vm.runInContext('showPhaseDetail("current-disposition",true);scalePhase(1.25)',context);
+const selected=input.di_plan?.tasks[0]?.id||'current-disposition';
+context.selected=selected;
+vm.runInContext('showPhaseDetail(selected,true);scalePhase(1.25)',context);
 nodes.get('phase-scroll').scrollLeft=90;
 await vm.runInContext('refresh()',context);
-assert.match(nodes.get('phase-panel').innerHTML,/Current disposition/);
+assert.ok(nodes.get('phase-panel').innerHTML.includes(input.di_plan?.tasks[0]?.title||'Current disposition'));
+if(input.di_plan){
+ assert.match(nodes.get('phase-panel').innerHTML,/Original effort.*Elapsed:.*Confidence:/);
+ assert.match(nodes.get('phase-panel').innerHTML,/Unknown.*Actuals: Unknown; not collected/);
+ const planned=current.phase_flow.nodes.find(n=>n.id===selected);
+ planned.revised_forecasts=[{reason:'Synthetic revised forecast',forecast:planned.original_estimate}];
+ planned.actuals={active_hours:0.1,human_wait_hours:null,technical_wait_hours:null,monetary:null};
+ await vm.runInContext('refresh()',context);
+ assert.match(nodes.get('phase-panel').innerHTML,/Revised forecasts.*Synthetic revised forecast/);
+ assert.match(nodes.get('phase-panel').innerHTML,/human_wait_hours.*null/);
+ assert.deepEqual(current.di_plan,input.di_plan);
+}
 assert.equal(nodes.get('phase-zoom').textContent,'125%');
 current.collector.health='failed';
 await vm.runInContext('refresh()',context);
