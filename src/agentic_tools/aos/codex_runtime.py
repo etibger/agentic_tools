@@ -2097,6 +2097,15 @@ for index,item in enumerate(json.loads(sys.argv[13])):
             text = recipe['assessment_prompt' if assignment['kind'] == 'assessment' else 'implementation_prompt']
             text = text.replace(recipe['outputs'], record['run_outputs'])
             text += '\nAttempt: ' + aid
+            if self.lifecycle is not None:
+                from .plan_runtime import package_in
+                with self.lifecycle.store._connection() as plan_db:
+                    approved_plan = package_in(plan_db, assignment['work_id'])['di_plan']
+                text += ('\nAuthoritative approved DI plan (outputs, dependencies and definitions of done):\n'
+                         + canonical(approved_plan) + '\nPerform only tasks for this assignment phase; '
+                         'a repair assignment uses the implementation task within the confirmed findings and approved correction limits. '
+                         'The host verifies the frozen-candidate milestone before independent assessment; '
+                         'independent assessment must assess the task outputs and definitions of done.')
             if record.get('source_review_evidence') is not None:
                 bound = record['source_review_evidence']
                 text += ('\nRead the exact original-baseline-to-candidate evidence at ' + bound['path']
@@ -3327,6 +3336,8 @@ for index,item in enumerate(json.loads(sys.argv[13])):
             raise Rejected('source_drift', 'Source changes exceed the approved change scope')
         result = {'status': 'completed' if turn['status'] == 'completed' else 'failed',
                   'executor': assignment['executor'], 'candidate': frozen, **stop,
+                  'output': {'attempt_id': record['attempt_id'], 'thread_id': record['thread_id'],
+                             'turn_id': record['turn_id'], 'source_identity': frozen['source_identity']},
                   'runtime_turn_status': turn['status'], 'runtime_thread_id': record['thread_id'],
                   'runtime_turn_id': record['turn_id'], 'usage': record['usage'],
                   'limits': ('Isolated checkout with endpoint resource observations; transient peaks and unobserved detached processes are not established.'

@@ -1,4 +1,5 @@
 """Coordinator transport tests; synthetic decisions never qualify a human host."""
+from di_plan_fixture import synthetic_plan
 import asyncio
 import sys
 
@@ -25,7 +26,7 @@ def requests():
     concept = dict(operation_id="present", work_id="MCP", expected_work_revision=1,
                    package_id="MCP-DI", revision=1, body="Synthetic transport only",
                    acceptance=["Same lifecycle and independent check"], team_envelope=team,
-                   authority=bounds["authority"], execution_envelope=bounds)
+                   authority=bounds["authority"], execution_envelope=bounds, di_plan=synthetic_plan(bounds))
     return intro, concept
 
 

@@ -95,13 +95,15 @@ def test_current_assignments_distinguish_future_review_from_history(tmp_path):
     fake = runtime(tmp_path)
     before = dashboard(collect(store, 'Q1'))
     assert len(before['agents']) == 1 and 'writer' in before['agents'][0]['role']
-    assert 'assessor' not in str(before['phase_flow']['nodes'])
+    planned_assessor = next(n for n in before['phase_flow']['nodes'] if n['id'] == 'assess')
+    assert planned_assessor['owner'] == 'assessor' and planned_assessor['status'] == 'waiting'
     run_to_end(lifecycle, fake)
     after = dashboard(collect(store, 'Q1'))
     assert after['agents'] == []
     assert len(after['phase_graph']['nodes']) == 2
     assert all(node['status'] == 'accepted' for node in after['phase_graph']['nodes'])
-    assert [n['title'] for n in after['phase_flow']['nodes']] == ['Concept decision', 'Current disposition']
+    assert {n['status'] for n in after['phase_flow']['nodes']} == {'accepted'}
+    assert len(after['phase_flow']['nodes']) == 4
     assert after['stage_status'] == 'Concept approved · Execution delivered'
 
 

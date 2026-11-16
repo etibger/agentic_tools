@@ -18,6 +18,7 @@ from .lifecycle import Lifecycle
 from .store import Rejected, Store, digest
 from .checks import source_digest
 from agentic_tools.check_adapters import identities as adapter_identities
+from .planning import DIPlan
 
 
 class ExecutionEnvelope(BaseModel):
@@ -94,6 +95,7 @@ class ConceptRequest(BaseModel):
     consequence: str | None = None
     decision_context: DecisionContext | None = None
     execution_envelope: ExecutionEnvelope
+    di_plan: DIPlan
 
 
 class PrerequisiteObservation(BaseModel):
@@ -179,6 +181,10 @@ def prepare_decision(store: Store, operation_id: str, work_id: str,
 
 def capabilities() -> dict:
     return {**version_receipt(), "coordinator_commands_version": 1,
+            "di_plan": {"format": "aos-di-plan-v1", "required_for_executable_concepts": True,
+                        "execution_profile": "two aggregate tasks: writer then independent assessor",
+                        "milestones": "candidate-frozen then named checks and independent-assessment",
+                        "forecast_transport": "trusted coordinator MCP record-forecast; no cap changes"},
             "human_intent": {"policy": "host-attested-v1", "enrollment": "explicit and sticky per work",
                              "ingestion": "trusted host Python API only; no MCP ingestion",
                              "controls": "current instruction_id required for enrolled work",

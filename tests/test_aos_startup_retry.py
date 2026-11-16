@@ -1,4 +1,5 @@
 """Simulated receipts exercise bounded recovery; no host or model jobs run."""
+from di_plan_fixture import synthetic_plan
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import json
@@ -33,7 +34,7 @@ def setup(tmp_path, *, retries=1, repairs=0, admitted=True, policy=POLICY, jobs=
             for name, role in [('writer', 'Implementer'), ('assessor', 'Independent assessor')]]
     store.introduce('intro', 'RETRY', 'SIMULATED bounded startup recovery', ['source'], team)
     current = store.present('present', 'RETRY', 1, 'SIMULATED-DI', 1, 'SIMULATED recovery',
-                            ['No model or host commands'], team, bounds['authority'], execution_envelope=bounds)
+                            ['No model or host commands'], team, bounds['authority'], execution_envelope=bounds, di_plan=synthetic_plan(bounds))
     lifecycle = Lifecycle(store)
     lifecycle.register('register', 'RETRY', {**bounds, 'concept_revision': 1, 'concept_digest': current['digest']})
     approve(store, current, 'RETRY')

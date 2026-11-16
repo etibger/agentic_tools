@@ -1,4 +1,5 @@
 """Disposable state and synthetic metadata receipts only; no real readiness/model."""
+from di_plan_fixture import synthetic_plan
 import copy
 import fcntl
 from datetime import datetime
@@ -15,7 +16,8 @@ from agentic_tools.aos import predispatch_settings_rebind as rebind
 from agentic_tools.aos.lifecycle import Lifecycle
 from agentic_tools.aos.store import Store, Rejected, canonical, digest
 from test_aos_lifecycle import contract
-from test_aos_store import TEAM
+from test_aos_store import TEAM as BASE_TEAM
+TEAM = [{**BASE_TEAM[0], 'name': name, 'role': role} for name, role in (('writer', 'Implementer'), ('assessor', 'Independent assessor'))]
 from test_aos_legacy_recovery import legacy
 
 
@@ -86,7 +88,7 @@ class Fixture:
                 'ledger_directory': str(self.store.directory), 'max_assignments': 10, 'max_job_seconds': 14400, 'max_seconds': 144000})
         bounds.pop('concept_revision'); bounds.pop('concept_digest')
         old = self.store.present('present', self.work, 1, 'FIXTURE-DI', 1, 'Unchanged feature', ['Check fixture'], TEAM,
-                                 bounds['authority'], execution_envelope=bounds)
+                                 bounds['authority'], execution_envelope=bounds, di_plan=synthetic_plan(bounds))
         self.digest = old['digest']
         self.lifecycle.register('register', self.work, {**bounds, 'concept_revision': 1, 'concept_digest': self.digest})
         self.decision = approve(self.store, self.work, self.digest, 'original-decision')
@@ -209,6 +211,13 @@ def test_tampered_prepared_envelope_cannot_expand_scope_even_if_approved(f, fiel
     packet['concept']['execution_envelope'][field] = value
     path = f.destination / 'tampered.json'; rebind._retain(path, packet)
     prepared = {'packet': packet, 'packet_path': str(path), 'packet_sha256': rebind._file(path)[1]['sha256']}
+    if field == 'required_checks':
+        # The DI contract now rejects this incomplete gate before a human can approve it.
+        before = f.store.read(f.work)
+        with pytest.raises(Rejected, match='invalid_di_plan'):
+            f.publish(prepared)
+        assert f.store.read(f.work)['revision'] == before['revision']
+        return
     request = f.publish(prepared)
     with pytest.raises(Rejected, match='allowed settings refresh'): rebind.apply(f.lifecycle, request)
 

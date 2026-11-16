@@ -1,4 +1,5 @@
 """Exact binding and received/recorded distinction required by amendment r2."""
+from di_plan_fixture import synthetic_plan
 import json
 import sqlite3
 import subprocess
@@ -21,7 +22,7 @@ def pending(tmp_path):
     bounds.pop('concept_revision')
     team = [{**TEAM[0], 'name': person} for person in ('writer', 'assessor')]
     current = store.present('concept', 'RECOVERY', 1, 'RECOVERY-DI', 1, 'Exact immutable snapshot', ['Fixture acceptance'],
-                            team, bounds['authority'], execution_envelope=bounds)
+                            team, bounds['authority'], execution_envelope=bounds, di_plan=synthetic_plan(bounds))
     lifecycle.register('contract', 'RECOVERY', contract(current))
     lifecycle.reconcile('RECOVERY')
     cap = store.host_capability('test-host', 'SIMULATED:observed')

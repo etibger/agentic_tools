@@ -79,9 +79,19 @@ function phaseDisplayDependencies(m){
  function ancestors(id){if(cache.has(id))return cache.get(id);const result=new Set();for(const dep of lookup.get(id).depends_on){result.add(dep);for(const earlier of ancestors(dep))result.add(earlier);}cache.set(id,result);return result;}
  return new Map(m.nodes.map(n=>[n.id,n.depends_on.filter(dep=>!n.depends_on.some(other=>other!==dep&&ancestors(other).has(dep)))]));
 }
+function diPlanFacts(n){
+ if(!n.original_estimate&&!n.verification_evidence)return '';
+ const e=n.original_estimate,range=r=>[r.low,r.base,r.high].join(' / ')+' hours';
+ let text=e?'Original effort (low / base / high): '+range(e.effort_hours)+'. Elapsed: '+range(e.elapsed_hours)+'. Confidence: '+e.confidence+'. Assumptions: '+e.assumptions.join('; ')+'. Risks: '+e.risks.join('; ')+'. Exclusions: '+e.exclusions.join('; ')+'. ':'';
+ if(e)for(const [kind,m] of Object.entries(e.monetary))text+=kind+': '+(m.value?[m.value.low,m.value.base,m.value.high].join(' / ')+' '+m.currency:'Unknown')+'. Basis: '+m.basis+'. ';
+ if(n.revised_forecasts?.length)text+='Revised forecasts (separate from original): '+JSON.stringify(n.revised_forecasts)+'. ';
+ text+='Actuals: '+(n.actuals?JSON.stringify(n.actuals):'Unknown; not collected')+'. Forecasts do not change approved execution limits.';
+ if(n.verification_evidence)text+=' Verification evidence: '+JSON.stringify(n.verification_evidence);
+ return '<p>'+escapeHTML(text)+'</p>';
+}
 function phaseBody(n){
  const lookup=new Map(phaseUI.model.nodes.map(x=>[x.id,x.title]));
- return '<p><strong>Status:</strong> '+phaseStatus(n.status)+' · <strong>Owner:</strong> '+escapeHTML(n.owner)+'</p><p>'+escapeHTML(n.summary)+'</p><p><strong>All required checks:</strong> '+escapeHTML(n.depends_on.map(id=>lookup.get(id)+' — '+phaseTransition(n,id)).join('; ')||'No earlier step')+'</p><p><strong>Wait / next action:</strong> '+escapeHTML(n.wait_reason)+'</p><p class="muted">Observed '+escapeHTML(time(n.observed_at))+'</p>'+(n.evidence?.length?'<ul>'+n.evidence.map(e=>'<li>'+safeLink(e.url,e.label)+'</li>').join(''):'<p class="muted">No linked evidence supplied for this step.</p>');
+ return '<p><strong>Status:</strong> '+phaseStatus(n.status)+' · <strong>Owner:</strong> '+escapeHTML(n.owner)+'</p><p>'+escapeHTML(n.summary)+'</p>'+diPlanFacts(n)+'<p><strong>All required checks:</strong> '+escapeHTML(n.depends_on.map(id=>lookup.get(id)+' — '+phaseTransition(n,id)).join('; ')||'No earlier step')+'</p><p><strong>Wait / next action:</strong> '+escapeHTML(n.wait_reason)+'</p><p class="muted">Observed '+escapeHTML(time(n.observed_at))+'</p>'+(n.evidence?.length?'<ul>'+n.evidence.map(e=>'<li>'+safeLink(e.url,e.label)+'</li>').join(''):'<p class="muted">No linked evidence supplied for this step.</p>');
 }
 function savePhaseView(){if(!phaseUI.key)return;const s=el('phase-scroll');phaseUI.left=s.scrollLeft;phaseUI.top=s.scrollTop;try{sessionStorage.setItem('aos-phase-ui-v1:'+phaseUI.key,JSON.stringify({scale:phaseUI.scale,left:phaseUI.left,top:phaseUI.top,pinned:phaseUI.pinned}));}catch{/* UI persistence is optional; state remains in memory. */}}
 function savedPhaseView(key){try{const v=JSON.parse(sessionStorage.getItem('aos-phase-ui-v1:'+key));if(v&&[v.scale,v.left,v.top].every(Number.isFinite)&&v.scale>=.25&&v.scale<=2&&v.left>=0&&v.top>=0&&(v.pinned===null||typeof v.pinned==='string'))return v;}catch{}return null;}

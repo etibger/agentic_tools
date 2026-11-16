@@ -1,4 +1,5 @@
 """Prospective finish capacity never refunds or reserves historical work."""
+from di_plan_fixture import synthetic_plan
 import json
 import sqlite3
 
@@ -192,7 +193,7 @@ def prepared(tmp_path, *, jobs=4, repairs=1, budget_jobs=4, budget_seconds=240, 
             for name, role in [('writer', 'Implementer'), ('assessor', 'Independent assessor')]]
     store.introduce('intro', 'FINISH', 'Simulated admission only', ['source'], team)
     current = store.present('present', 'FINISH', 1, 'SIMULATED-DI', 1, 'Simulated capacity check',
-                            ['No model or native commands'], team, bounds['authority'], execution_envelope=bounds)
+                            ['No model or native commands'], team, bounds['authority'], execution_envelope=bounds, di_plan=synthetic_plan(bounds))
     lifecycle = Lifecycle(store)
     lifecycle.register('register', 'FINISH', {**bounds, 'concept_revision': 1, 'concept_digest': current['digest']})
     approve(store, current, 'FINISH')
