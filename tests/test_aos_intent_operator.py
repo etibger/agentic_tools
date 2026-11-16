@@ -60,8 +60,8 @@ class Browser:
         conn.close()
         return status, body
 
-    def login(self, key):
-        assert self.request('POST', '/unlock', {'operator_key': key.read_text().strip()})[0] == 200
+    def login(self, key, **headers):
+        assert self.request('POST', '/unlock', {'operator_key': key.read_text().strip()}, **headers)[0] == 200
 
     def form(self, **changes):
         status, body = self.request()
@@ -70,8 +70,8 @@ class Browser:
         fields['supersedes'] = unescape(re.search(r'<textarea name="supersedes">(.*?)</textarea>', body, re.S).group(1))
         return {**fields, 'action': 'resume', **changes}
 
-    def submit(self, fields, expected=200):
-        status, body = self.request('POST', '/instruction', fields)
+    def submit(self, fields, expected=200, **headers):
+        status, body = self.request('POST', '/instruction', fields, **headers)
         assert status == expected, body
         return body
 
@@ -148,6 +148,144 @@ def test_foreign_origin_cross_site_host_and_content_type_reject(fixture, headers
         form = browser.form(action='enroll')
         assert browser.request('POST', '/instruction', form, **headers)[0] == 409
         assert lifecycle.snapshot('Q1')['human_intent']['disposition'] == 'unenrolled'
+
+
+def test_same_origin_null_origin_unlock_controls_and_stale_replay(fixture):
+    store, lifecycle, options = fixture
+    with IntentService(store, **options) as service:
+        browser = Browser(service)
+        browser.login(options['operator_key'], Origin='null')
+        browser.submit(browser.form(action='enroll'), Origin='null')
+        stopped = browser.form(action='stop')
+        browser.submit(stopped, Origin='null')
+        assert lifecycle.snapshot('Q1')['execution'] == 'paused'
+        stale = browser.form(action='stop')
+        resumed = browser.form(action='resume')
+        browser.submit(resumed, Origin='null')
+        browser.submit(stale, expected=409, Origin='null')
+        browser.submit(browser.form(action='replay', reference=stopped['input_id']), Origin='null')
+        browser.submit(stopped, Origin='null')
+        assert lifecycle.snapshot('Q1')['human_intent']['controlling_instruction'] == resumed['input_id']
+        browser.submit(browser.form(action='stop'), Origin='null')
+        assert lifecycle.snapshot('Q1')['human_intent']['disposition'] == 'stop'
+        browser.submit(browser.form(action='resume'), Origin='null')
+        browser.submit(browser.form(action='handoff'), Origin='null')
+        assert len(store.read('Q1')['decisions']) == 1  # Existing synthetic fixture decision only.
+
+
+def raw_post(browser, route, body, headers):
+    """Preserve missing/duplicate headers; the high-level client normalizes them."""
+    conn = HTTPSConnection('127.0.0.1', browser.service.port, context=ssl._create_unverified_context(), timeout=4)
+    try:
+        conn.putrequest('POST', route, skip_host=True, skip_accept_encoding=True)
+        for name, value in headers:
+            conn.putheader(name, value)
+        conn.endheaders(body)
+        response = conn.getresponse()
+        return response.status, response.read().decode(), response.getheader('Set-Cookie')
+    finally:
+        conn.close()
+
+
+REQUIRED_HEADERS = ('Host', 'Origin', 'Sec-Fetch-Site', 'Content-Type', 'Content-Length')
+
+
+@pytest.mark.parametrize('change,name,value', [
+    *[('missing', name, '') for name in REQUIRED_HEADERS],
+    *[('duplicate', name, '') for name in REQUIRED_HEADERS],
+    ('replace', 'Host', 'foreign.invalid'),
+    ('replace', 'Origin', 'https://foreign.invalid'),
+    ('replace', 'Origin', ''),
+    ('replace', 'Origin', 'NULL'),
+    ('replace', 'Origin', 'null, null'),
+    ('replace', 'Sec-Fetch-Site', 'cross-site'),
+    ('replace', 'Sec-Fetch-Site', 'same-site'),
+    ('replace', 'Sec-Fetch-Site', 'none'),
+    ('replace', 'Content-Type', 'application/json'),
+    ('replace', 'Content-Length', 'malformed'),
+    ('extra', 'Transfer-Encoding', 'chunked'),
+])
+def test_null_origin_preserves_required_header_checks_before_unlock_or_control(fixture, change, name, value):
+    store, lifecycle, options = fixture
+    with IntentService(store, **options) as service:
+        browser = Browser(service)
+        for route in ('/unlock', '/instruction'):
+            if route == '/unlock':
+                fields = {'operator_key': options['operator_key'].read_text().strip()}
+            else:
+                browser.login(options['operator_key'], Origin='null')
+                browser.submit(browser.form(action='enroll'), Origin='null')
+                browser.submit(browser.form(action='stop'), Origin='null')
+                fields = browser.form(action='resume')
+            before = lifecycle.snapshot('Q1')['human_intent']
+            with store._connection() as db:
+                counts = [db.execute('SELECT count(*) FROM ' + table).fetchone()[0]
+                          for table in ('human_operator_input', 'human_instruction')]
+            body = urlencode(fields).encode()
+            headers = [('Host', service.origin.removeprefix('https://')), ('Origin', 'null'),
+                       ('Sec-Fetch-Site', 'same-origin'), ('Content-Type', 'application/x-www-form-urlencoded'),
+                       ('Content-Length', str(len(body))), ('Cookie', browser.cookie)]
+            if change in {'missing', 'replace'}:
+                headers = [(key, item) for key, item in headers if key != name]
+            if change == 'duplicate':
+                value = next(item for key, item in headers if key == name)
+            if change != 'missing':
+                headers.append((name, value))
+            status, page, cookie = raw_post(browser, route, body, headers)
+            assert status == 409 and cookie is None
+            assert 'Owner changes' not in page and 'SIMULATED-operator-secret' not in page
+            if route == '/unlock':
+                assert 'Unlock not confirmed' in page and 'No instruction was submitted' in page
+                assert not service.controller.sessions
+            else:
+                assert fields['csrf'] not in page
+            assert lifecycle.snapshot('Q1')['human_intent'] == before
+            with store._connection() as db:
+                assert [db.execute('SELECT count(*) FROM ' + table).fetchone()[0]
+                        for table in ('human_operator_input', 'human_instruction')] == counts
+
+
+@pytest.mark.parametrize('body', [b'', b'malformed', b'operator_key=one&operator_key=two', b'\xff', b'x=' + b'a' * 16384])
+def test_null_origin_does_not_accept_malformed_forms(fixture, body):
+    store, lifecycle, options = fixture
+    with IntentService(store, **options) as service:
+        browser = Browser(service)
+        for route in ('/unlock', '/instruction'):
+            if route == '/instruction':
+                browser.login(options['operator_key'], Origin='null')
+                browser.submit(browser.form(action='enroll'), Origin='null')
+                browser.submit(browser.form(action='stop'), Origin='null')
+            before = lifecycle.snapshot('Q1')['human_intent']
+            with store._connection() as db:
+                count = db.execute('SELECT count(*) FROM human_operator_input').fetchone()[0]
+            headers = [('Host', service.origin.removeprefix('https://')), ('Origin', 'null'),
+                       ('Sec-Fetch-Site', 'same-origin'), ('Content-Type', 'application/x-www-form-urlencoded'),
+                       ('Content-Length', str(len(body))), ('Cookie', browser.cookie)]
+            assert raw_post(browser, route, body, headers)[0] == 409
+            assert lifecycle.snapshot('Q1')['human_intent'] == before
+            with store._connection() as db:
+                assert db.execute('SELECT count(*) FROM human_operator_input').fetchone()[0] == count
+
+
+def test_null_origin_still_requires_operator_key_session_and_form_csrf(fixture):
+    store, lifecycle, options = fixture
+    with IntentService(store, **options) as service:
+        browser = Browser(service)
+        status, page = browser.request('POST', '/unlock', {'operator_key': 'wrong'}, Origin='null')
+        assert status == 409 and 'Unlock not confirmed' in page and not browser.cookie
+        browser.login(options['operator_key'], Origin='null')
+        browser.submit(browser.form(action='enroll'), Origin='null')
+        browser.submit(browser.form(action='stop'), Origin='null')
+        fields = browser.form(action='resume')
+        before = lifecycle.snapshot('Q1')['human_intent']
+        cookie, browser.cookie = browser.cookie, ''
+        browser.submit(fields, expected=409, Origin='null')
+        browser.cookie = cookie
+        browser.submit({**fields, 'csrf': 'wrong'}, expected=409, Origin='null')
+        browser.submit({**fields, 'input_id': 'human-unissued'}, expected=409, Origin='null')
+        assert lifecycle.snapshot('Q1')['human_intent'] == before
+        with store._connection() as db:
+            assert db.execute('SELECT count(*) FROM human_operator_input').fetchone()[0] == 2
 
 
 def test_authentication_csrf_scope_and_duplicate_fields(fixture):
