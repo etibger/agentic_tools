@@ -4,6 +4,12 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      baseline_ref:
+        description: Optional full commit SHA for diagnostic replay of failed cases
+        required: false
+        default: ""
+        type: string
 permissions:
   contents: read
 concurrency:
@@ -93,5 +99,79 @@ jobs:
         with:
           name: aos-evidence-index
           path: collected/
+          if-no-files-found: error
+          retention-days: 30
+  baseline:
+    name: Diagnostic baseline comparison
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.baseline_ref != '' && needs.regression.result == 'failure' }}
+    needs: [regression, evidence]
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      BASELINE_REF: ${{ inputs.baseline_ref }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.12.21"
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aos-*
+          path: baseline-inputs
+      - name: Validate baseline identity and prepare its isolated checkout
+        run: |
+          python3 -c 'import os,re; assert re.fullmatch("[0-9a-f]{40}",os.environ["BASELINE_REF"]), "Expected full commit SHA"'
+          git -c core.fsmonitor=false fetch --no-tags origin "$BASELINE_REF"
+          git -c core.fsmonitor=false worktree add --detach "$RUNNER_TEMP/aos-baseline" "$BASELINE_REF"
+          uv sync --locked --dev --python 3.12.14 --project "$RUNNER_TEMP/aos-baseline"
+      - name: Select only completely observed current failures
+        id: select
+        run: >-
+          uv run --project "$RUNNER_TEMP/aos-baseline" python scripts/ci_baseline.py select
+          --artifacts baseline-inputs --output reports/baseline-targets.json
+          --candidate-ref "$GITHUB_SHA"
+      # Keep this step's actual failure: a reproduced baseline failure is not a pass.
+      - name: Replay failed cases at the exact baseline
+        working-directory: ${{ runner.temp }}/aos-baseline
+        run: |
+          uv run python - <<'PYCODE'
+          import json, os, subprocess
+          from pathlib import Path
+          harness = Path(os.environ['GITHUB_WORKSPACE'])
+          output = harness / 'reports/baseline'
+          targets = json.loads((harness / 'reports/baseline-targets.json').read_text())['targets']
+          assert targets, 'No observed failed cases available for baseline replay'
+          bootstrap = "\n".join([
+              "import importlib.util,os,sys,pytest",
+              "from pathlib import Path",
+              "path=Path(os.environ['GITHUB_WORKSPACE'])/'scripts/ci_pytest.py'",
+              "spec=importlib.util.spec_from_file_location('aos_baseline_instrumentation',path)",
+              "plugin=importlib.util.module_from_spec(spec)",
+              "sys.modules[spec.name]=plugin",
+              "spec.loader.exec_module(plugin)",
+              "raise SystemExit(pytest.main(sys.argv[1:],plugins=[plugin]))",
+          ])
+          command = ['uv', 'run', 'python', str(harness / 'scripts/ci_regression.py'),
+                     '--output', str(output), '--timeout', '600', '--pytest-required',
+                     '--junit', str(output / 'junit.xml'), '--',
+                     'uv', 'run', 'python', '-c', bootstrap, '-v',
+                     '--junitxml=' + str(output / 'junit.xml'), *targets]
+          raise SystemExit(subprocess.run(command).returncode)
+          PYCODE
+      - name: Classify baseline outcomes without waiving current failures
+        if: ${{ always() && steps.select.outcome == 'success' }}
+        run: >-
+          uv run --project "$RUNNER_TEMP/aos-baseline" python scripts/ci_baseline.py compare
+          --targets reports/baseline-targets.json --baseline reports/baseline
+          --baseline-ref "$BASELINE_REF" --output reports/baseline-comparison.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aos-baseline-comparison
+          path: reports/
           if-no-files-found: error
           retention-days: 30
