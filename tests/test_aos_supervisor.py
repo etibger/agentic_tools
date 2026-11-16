@@ -326,6 +326,38 @@ print(json.dumps(result),flush=True)
         assert child.poll() is not None
 
 
+@pytest.mark.parametrize('outcome,expected', [('accept', 'delivered'), ('decline', 'declined'), ('cancel', 'cancelled')])
+def test_answer_between_status_and_pending_read_reuses_saved_decision(context, monkeypatch, outcome, expected):
+    """An original answer can win the polling race; never prepare it again."""
+    p = context
+    pending_approvals = Store.pending_approvals
+    awaiting_answer = False
+
+    def emit(progress):
+        nonlocal awaiting_answer
+        p.progress.append(copy.deepcopy(progress))
+        if progress['state'] == 'pending':
+            awaiting_answer = True
+
+    def answer_during_pending_read(store):
+        nonlocal awaiting_answer
+        rows = pending_approvals(store)
+        if awaiting_answer and rows:
+            awaiting_answer = False
+            answer(store, rows[0]['challenge_id'], outcome)
+            p.answers += 1
+        return pending_approvals(store)
+
+    monkeypatch.setattr(Store, 'pending_approvals', answer_during_pending_read)
+    result = p.start(emit=emit)
+    assert result['state'] == expected, result
+    assert p.prepares == p.answers == 1
+    with p.store()._connection() as db:
+        assert db.execute('SELECT count(*) FROM challenge').fetchone()[0] == 1
+        assert db.execute('SELECT count(*) FROM decision').fetchone()[0] == 1
+        assert db.execute('SELECT count(*) FROM assignment').fetchone()[0] == (2 if outcome == 'accept' else 0)
+
+
 def test_wrapped_sqlite_contention_reads_same_saved_decision(context, monkeypatch):
     p = context
     verify = Store.verify_decision

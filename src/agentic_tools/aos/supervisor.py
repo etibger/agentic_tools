@@ -247,6 +247,11 @@ def _drive(store, lifecycle, worker, packet, service, runtime_factory, interval,
                     challenge = current[0]['challenge_id']
                 else:
                     record = store.read(work_id)
+                    # The human can answer between the status and pending reads.
+                    # Reuse that verified answer before preparing its operation
+                    # again with the now-advanced work revision.
+                    if _decision(store, record, target) is not None:
+                        continue
                     answer = prepare_decision(store, _operation(work_id, target, 'decision'), work_id,
                                               record['revision'], target)
                     challenge = answer.get('challenge_id')
