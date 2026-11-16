@@ -12,6 +12,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -19,11 +20,38 @@ jobs:
           version: "0.12.21"
           enable-cache: true
       - run: uv sync --locked --python 3.12
-      - run: uv run python -m unittest discover -s scripts -p 'test_*.py'
-      - run: uv run python scripts/check_gate.py templates/gate-state.example.json
-      - run: uv run python scripts/check_publication.py
-      - run: node scripts/check_dashboard.mjs
-      - run: uv run mkdocs build --strict
+      - name: script-tests
+        if: ${{ !cancelled() }}
+        run: >-
+          uv run python scripts/ci_regression.py --output reports/script-tests --timeout 120 --
+          uv run python -m unittest discover -s scripts -p 'test_*.py'
+      - name: gate
+        if: ${{ !cancelled() }}
+        run: >-
+          uv run python scripts/ci_regression.py --output reports/gate --timeout 60 --
+          uv run python scripts/check_gate.py templates/gate-state.example.json
+      - name: publication
+        if: ${{ !cancelled() }}
+        run: >-
+          uv run python scripts/ci_regression.py --output reports/publication --timeout 60 --
+          uv run python scripts/check_publication.py
+      - name: dashboard
+        if: ${{ !cancelled() }}
+        run: >-
+          uv run python scripts/ci_regression.py --output reports/dashboard --timeout 60 --
+          node scripts/check_dashboard.mjs
+      - name: docs-build
+        if: ${{ !cancelled() }}
+        run: >-
+          uv run python scripts/ci_regression.py --output reports/docs-build --timeout 120 --
+          uv run mkdocs build --strict
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: documentation-evidence
+          path: reports/
+          if-no-files-found: error
+          retention-days: 30
       - uses: actions/upload-artifact@v4
         with:
           name: mkdocs-site

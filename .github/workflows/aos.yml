@@ -10,9 +10,17 @@ concurrency:
   group: aos-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  macos:
+  regression:
+    name: macOS regression ${{ matrix.shard }}
     runs-on: macos-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    env:
+      AOS_CI_SHARD_INDEX: ${{ matrix.shard }}
+      AOS_CI_SHARD_COUNT: 8
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -24,12 +32,66 @@ jobs:
           node-version: "22"
       - run: uv sync --locked --dev --python 3.12.14
       - run: uv run aos version
-      - run: uv run pytest --junitxml=reports/aos.xml
-      - run: node scripts/check_dashboard.mjs
+      # Leave five minutes outside the command bound for setup and diagnostics.
+      - name: Run attributed regression shard
+        run: >-
+          uv run python scripts/ci_regression.py
+          --output reports/regression-${{ matrix.shard }} --timeout 600 --pytest-required
+          --junit reports/regression-${{ matrix.shard }}/junit.xml --
+          uv run python -m pytest -v -p scripts.ci_pytest --durations=40
+          --junitxml=reports/regression-${{ matrix.shard }}/junit.xml
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: aos-macos-test-results
-          path: reports/aos.xml
-          if-no-files-found: warn
+          name: aos-regression-${{ matrix.shard }}
+          path: reports/
+          if-no-files-found: error
+          retention-days: 30
+  dashboard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Run independent dashboard checks
+        run: >-
+          python scripts/ci_regression.py --output reports/dashboard --timeout 60 --
+          node scripts/check_dashboard.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aos-dashboard
+          path: reports/
+          if-no-files-found: error
+          retention-days: 30
+  evidence:
+    if: always()
+    needs: [regression, dashboard]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: aos-*
+          path: collected
+      - name: Verify coverage and authoritative job results
+        if: always()
+        env:
+          AOS_CI_NEEDS: ${{ toJSON(needs) }}
+        run: python scripts/ci_aggregate.py --artifacts collected --shards 8
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aos-evidence-index
+          path: collected/
+          if-no-files-found: error
           retention-days: 30

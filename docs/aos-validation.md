@@ -52,6 +52,24 @@ node scripts/check_dashboard.mjs
 uv run mkdocs build --strict
 ```
 
+The regression workflow runs eight macOS jobs with `fail-fast: false`. The optional `scripts.ci_pytest` plugin assigns each collected node ID (including parameter values) to exactly one job using SHA-256 modulo eight. Every job records the full collection and its selection. The evidence job compares those inventories, checks the disjoint union and reports unique tests once; repeated focused runs and documentation checks are separate evidence, never added to that total. This spreads the costly recovery fixtures without exempting native cases or changing their ownership guards. The historical single job reached only 55% before its 15-minute limit; setup took about 19 seconds and tests continued progressing. Its apparent successful upload contained no JUnit file.
+
+Each regression command has a 600-second bound inside a 15-minute job, leaving time for setup and artifact collection. The independent dashboard job has a 60-second command bound inside five minutes and runs even when regression jobs fail. Documentation retains its separate Ubuntu workflow: script tests and strict build have 120-second bounds, gate/publication/dashboard checks 60 seconds, inside ten minutes. Other documentation checks continue after a check failure. These are finite initial limits to qualify against measured shard durations, not permission to extend timeouts indefinitely. Generic CI does not qualify an installed native runtime or a new product journey.
+
+For a local attributed shard, use a new output directory on every invocation:
+
+```sh
+AOS_CI_SHARD_INDEX=0 AOS_CI_SHARD_COUNT=8 uv run python scripts/ci_regression.py \
+  --output private/tmp/to_persist/regression/shard-0 --timeout 600 --pytest-required \
+  --junit private/tmp/to_persist/regression/shard-0/junit.xml -- \
+  uv run python -m pytest -v -p scripts.ci_pytest --durations=40 \
+  --junitxml=private/tmp/to_persist/regression/shard-0/junit.xml
+```
+
+Run indices 0 through 7 against unchanged source. The runner records the commit, tracked diff digest, untracked source hashes, command, interpreter, platform, available dependency and tool versions, timestamps, duration and exit status. It compares source identities before and after execution; changed or unavailable source cannot pass. Generated reports are ignored by Git so they do not become source inputs. `command.log` preserves output, `inventory.json` lists collected/selected cases, and flushed `events.jsonl` preserves test phases and available failure details before final JUnit generation. `tests.json` distinguishes passed, failed, skipped, interrupted in-progress (`cancelled`) and unobserved (`missing`) cases; expected-failure metadata remains visible. A timed-out command is `timed_out`; missing, invalid and present JUnit are separate states. A successful child command with incomplete required evidence fails qualification. Output-directory reuse is rejected to prevent stale passes.
+
+CI uploads available evidence with `always()`. The final evidence job separately checks GitHub's authoritative job conclusions, so a successful upload cannot turn failed, cancelled or skipped execution into success. Missing artifacts or inventories fail reconciliation. The documentation workflow retains the same command receipts and logs. SIGTERM/SIGINT permit bounded termination of the runner's own process group and partial-result finalization; abrupt host loss, SIGKILL, detached descendants or cancellation of the entire workflow can prevent finalization or upload. A surviving `running` receipt is incomplete evidence. GitHub remains authoritative, and no complete result may be inferred from absent files. Existing native process ownership tests retain responsibility for their independently created resources.
+
 The publication checker uses Git's file inventory. A clean exported source tree can have its own disposable Git index; never initialize or change the source checkout's index for this check. Include all intended public source, tests, guides and configuration, with symlinks preserved. Keep private attachments in their original location and run the checker on the clean public export. Its pass remains a bounded pattern check requiring semantic disclosure review.
 
 The full pytest suite includes a fresh source/wheel bring-up: it preserves the template symlink, builds without private helpers, verifies packaged renderer bytes and serves the extracted wheel from outside the checkout. It uses disposable state and ports, no model invocation or installation. JUnit goes outside the exported public inputs; normal `.venv`, generated docs and cache locations remain unchanged. Run `uv build --wheel` separately when retaining a distribution artifact is part of the selected delivery.
